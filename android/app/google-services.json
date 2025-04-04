@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "995531465114",
+    "project_id": "unitrack-89060",
+    "storage_bucket": "unitrack-89060.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:995531465114:android:c2e11e1cf323ff667bda23",
+        "android_client_info": {
+          "package_name": "com.example.unitrack"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDRdTR8M9dmM5DJlbnLBCpgE0b7ijBieuM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
