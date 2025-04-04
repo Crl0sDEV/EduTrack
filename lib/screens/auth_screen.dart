@@ -18,92 +18,100 @@ class _AuthScreenState extends State<AuthScreen> {
 
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController(); // New controller for name
   bool _isLogin = true;
   bool _isPasswordVisible = false;
   String _userType = "Student"; 
 
-  Future<void> _authenticate() async {
-  String email = _emailController.text.trim();
-  String password = _passwordController.text.trim();
-
-  if (email.isEmpty || password.isEmpty) {
-    Fluttertoast.showToast(
-      msg: "Please fill all fields",
-      toastLength: Toast.LENGTH_SHORT,
-      gravity: ToastGravity.TOP,
-      backgroundColor: Colors.redAccent,
-      textColor: Colors.white,
-    );
-    return;
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose(); // Dispose the name controller
+    super.dispose();
   }
 
-  try {
-    UserCredential userCredential;
-    if (_isLogin) {
-      
-      userCredential = await _auth.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+  Future<void> _authenticate() async {
+    String email = _emailController.text.trim();
+    String password = _passwordController.text.trim();
+    String name = _nameController.text.trim(); // Get name value
 
-      
-      DocumentSnapshot userDoc = await _firestore
-          .collection("users")
-          .doc(userCredential.user!.uid)
-          .get();
-      if (userDoc.exists) {
-        _userType = userDoc["userType"];
-      }
-
-      
+    if (email.isEmpty || password.isEmpty || (!_isLogin && name.isEmpty)) {
       Fluttertoast.showToast(
-        msg: "Login successful!",
-        toastLength: Toast.LENGTH_LONG,
+        msg: "Please fill all fields",
+        toastLength: Toast.LENGTH_SHORT,
         gravity: ToastGravity.TOP,
-        backgroundColor: Color(0xFFFFC107),
+        backgroundColor: Colors.redAccent,
         textColor: Colors.white,
       );
-    } else {
-      
-      userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
+      return;
+    }
+
+    try {
+      UserCredential userCredential;
+      if (_isLogin) {
+        userCredential = await _auth.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+
+        DocumentSnapshot userDoc = await _firestore
+            .collection("users")
+            .doc(userCredential.user!.uid)
+            .get();
+        if (userDoc.exists) {
+          _userType = userDoc["userType"];
+        }
+
+        Fluttertoast.showToast(
+          msg: "Login successful!",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.TOP,
+          backgroundColor: Color(0xFFFFC107),
+          textColor: Colors.white,
+        );
+      } else {
+        userCredential = await _auth.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+
+        // Update user profile with display name
+        await userCredential.user!.updateDisplayName(name);
+
+        await _firestore.collection("users").doc(userCredential.user!.uid).set({
+          "email": email,
+          "name": name, // Store name in Firestore
+          "uid": userCredential.user!.uid,
+          "userType": _userType,
+          "phone": "", // Initialize phone as empty
+          "profilePicture": "", // Initialize profile picture as empty
+          "createdAt": FieldValue.serverTimestamp(),
+        });
+
+        Fluttertoast.showToast(
+          msg: "Account created successfully!",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.TOP,
+          backgroundColor: Color(0xFFFFC107),
+          textColor: Colors.white,
+        );
+      }
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => HomeScreen(userType: _userType)),
       );
-
-      
-      await _firestore.collection("users").doc(userCredential.user!.uid).set({
-        "email": email,
-        "uid": userCredential.user!.uid,
-        "userType": _userType,
-        "createdAt": FieldValue.serverTimestamp(),
-      });
-
-      
+    } catch (e) {
       Fluttertoast.showToast(
-        msg: "Account created successfully!",
+        msg: "Error: ${e.toString()}",
         toastLength: Toast.LENGTH_LONG,
         gravity: ToastGravity.TOP,
-        backgroundColor: Color(0xFFFFC107),
+        backgroundColor: Colors.redAccent,
         textColor: Colors.white,
       );
     }
-
-    
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => HomeScreen(userType: _userType)),
-    );
-  } catch (e) {
-    
-    Fluttertoast.showToast(
-      msg: "Error: ${e.toString()}",
-      toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.TOP,
-      backgroundColor: Colors.redAccent,
-      textColor: Colors.white,
-    );
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -115,7 +123,6 @@ class _AuthScreenState extends State<AuthScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              
               Text(
                 "EduTrack",
                 style: GoogleFonts.lobsterTwo(
@@ -127,7 +134,6 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
               const SizedBox(height: 30),
 
-              
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -144,6 +150,22 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Add name field (only visible during sign-up)
+                    if (!_isLogin)
+                      Column(
+                        children: [
+                          TextField(
+                            controller: _nameController,
+                            decoration: const InputDecoration(
+                              labelText: "Full Name",
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.person),
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                        ],
+                      ),
+
                     TextField(
                       controller: _emailController,
                       decoration: const InputDecoration(
@@ -154,7 +176,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const SizedBox(height: 15),
 
-                    
                     TextField(
                       controller: _passwordController,
                       obscureText: !_isPasswordVisible,
@@ -178,7 +199,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const SizedBox(height: 15),
 
-                    
                     if (!_isLogin)
                       DropdownButtonFormField<String>(
                         value: _userType,
@@ -199,7 +219,6 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     const SizedBox(height: 20),
 
-                    
                     ElevatedButton(
                       onPressed: _authenticate,
                       style: ElevatedButton.styleFrom(
@@ -216,9 +235,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: Text(_isLogin ? "Login" : "Sign Up"),
                     ),
 
-
                     const SizedBox(height: 30),
-
 
                     Align(
                       alignment: Alignment.centerLeft,
@@ -226,6 +243,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         onPressed: () {
                           setState(() {
                             _isLogin = !_isLogin;
+                            // Clear the name field when switching modes
+                            if (_isLogin) _nameController.clear();
                           });
                         },
                         child: RichText(
