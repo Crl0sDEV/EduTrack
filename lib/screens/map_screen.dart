@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -26,22 +25,22 @@ class _MapScreenState extends State<MapScreen> {
   StreamSubscription<Position>? _positionStreamSubscription;
 
   LatLng _currentLocation =
-      LatLng(14.966059, 120.955091); // Default: St. Paul College San Rafael
+      LatLng(14.966059, 120.955091); 
   final String? _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
-  // School bounds
+  
   final LatLngBounds _schoolBounds = LatLngBounds(
-    LatLng(14.9655, 120.9545), // Southwest corner
-    LatLng(14.9668, 120.9557), // Northeast corner
+    LatLng(14.9655, 120.9545), 
+    LatLng(14.9668, 120.9557), 
   );
 
-  // Calculate school center
+  
   late final LatLng _schoolCenter = LatLng(
     (_schoolBounds.south + _schoolBounds.north) / 2,
     (_schoolBounds.west + _schoolBounds.east) / 2,
   );
 
-  // Store group data
+  
   String? _teacherId;
   List<String> _memberIds = [];
   bool _isLoadingGroup = true;
@@ -207,7 +206,7 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      // Check and request permissions
+      
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         bool enabled = await Geolocator.openLocationSettings();
@@ -253,7 +252,7 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      // Try to get current position with timeout
+      
       Position? position;
       try {
         position = await Geolocator.getCurrentPosition(
@@ -267,7 +266,7 @@ class _MapScreenState extends State<MapScreen> {
         logger.e("Position error: $e");
       }
 
-      // Fallback to last known position if current fails
+      
       if (position == null) {
         try {
           position = await Geolocator.getLastKnownPosition();
@@ -288,14 +287,14 @@ class _MapScreenState extends State<MapScreen> {
 
       _handleNewPosition(position);
 
-      // Cancel any existing stream
+      
       _positionStreamSubscription?.cancel();
 
-      // Set up new location stream
+      
       _positionStreamSubscription = Geolocator.getPositionStream(
         locationSettings: LocationSettings(
           accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 10, // meters
+          distanceFilter: 10, 
           timeLimit: const Duration(seconds: 30),
         ),
       ).listen(
@@ -327,7 +326,7 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  // Fetch user name from Firestore
+  
   Future<String> _getUserName(String userId) async {
     try {
       final userDoc = await FirebaseFirestore.instance
@@ -363,7 +362,7 @@ class _MapScreenState extends State<MapScreen> {
       final allUserIds = {..._memberIds};
       if (_teacherId != null) allUserIds.add(_teacherId!);
 
-      // Fetch all user names in parallel
+      
       final userNameFutures = allUserIds.map((userId) async {
         final name = await _getUserName(userId);
         
@@ -382,7 +381,7 @@ class _MapScreenState extends State<MapScreen> {
         );
       }).toList();
 
-      // Wait for all user data to be fetched
+      
       users = await Future.wait(userNameFutures);
 
       users.sort((a, b) {

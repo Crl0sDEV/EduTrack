@@ -55,7 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   : Text(
                       "Welcome, $_userName",
-                      key: ValueKey(_userName), // Important for animation
+                      key: ValueKey(_userName), 
                       style: const TextStyle(fontSize: 18),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
@@ -87,13 +87,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ListTile(
             title: const Text("Home"),
             onTap: () {
-              Navigator.pop(context); // Just close the drawer
+              Navigator.pop(context); 
             },
           ),
           ListTile(
             title: const Text("Profile"),
             onTap: () {
-              Navigator.pop(context); // Close the drawer
+              Navigator.pop(context); 
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const ProfileScreen()),
@@ -154,17 +154,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildGroupCard(String groupId, Map<String, dynamic> groupData) {
-    // Create a stream for this specific group's data
+    
     return StreamBuilder<DocumentSnapshot>(
       stream: _firestore.collection('groups').doc(groupId).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const SizedBox.shrink(); // Or a loading indicator
+          return const SizedBox.shrink(); 
         }
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
 
-        // Add null check before accessing endTime
+        
         if (data['endTime'] == null || !(data['endTime'] is Timestamp)) {
           return Card(
             shape:
@@ -184,14 +184,14 @@ class _HomeScreenState extends State<HomeScreen> {
         final isExpired = timeRemaining.isNegative;
         final isExpiringSoon = !isExpired && timeRemaining.inMinutes <= 60;
 
-        // Format expiration time in 12-hour format with AM/PM
+        
         String formatExpirationTime(DateTime date) {
           final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
           final ampm = date.hour < 12 ? 'AM' : 'PM';
           return '${date.month}/${date.day}/${date.year} at $hour:${date.minute.toString().padLeft(2, '0')} $ampm';
         }
 
-        // If expired, return an empty container (the group will be deleted soon)
+        
         if (isExpired) {
           return const SizedBox.shrink();
         }
@@ -219,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 5),
 
-                  // Join Code with Copy Button
+                  
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -237,7 +237,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   const SizedBox(height: 5),
-                  // Expiration time with clock icon
+                  
                   Row(
                     children: [
                       const Icon(Icons.access_time,
@@ -269,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Add this new method to fetch user name
+  
   Future<void> _fetchUserName() async {
     try {
       final userDoc = await _firestore
@@ -285,7 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
               'Unknown';
         });
       } else {
-        // If no user document, use email name
+        
         setState(() {
           _userName = _auth.currentUser!.email?.split('@').first ?? 'Unknown';
         });
@@ -304,10 +304,10 @@ class _HomeScreenState extends State<HomeScreen> {
   for (var doc in groups.docs) {
     var data = doc.data() as Map<String, dynamic>;
     
-    // Add null check before accessing endTime
+    
     if (data["endTime"] == null || !(data["endTime"] is Timestamp)) {
       print("Group with invalid endTime found: ${data["groupName"] ?? "Unknown"}");
-      continue; // Skip this document and continue with the next one
+      continue; 
     }
     
     DateTime endTime = data["endTime"].toDate();
@@ -323,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Fluttertoast.showToast(
       msg: message,
       toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.TOP, // ✅ Shows the toast in the upper center
+      gravity: ToastGravity.TOP, 
       backgroundColor: Color(0xFFFFC107),
       textColor: Colors.white,
       fontSize: 16.0,
@@ -388,14 +388,14 @@ class _HomeScreenState extends State<HomeScreen> {
               labelText: "Group Name", border: OutlineInputBorder()),
         ),
         const SizedBox(height: 15),
-        // Date Picker
+        
         ListTile(
           title:
               Text("Date: ${_selectedDate.toLocal().toString().split(' ')[0]}"),
           trailing: const Icon(Icons.calendar_today),
           onTap: () => selectDate(context),
         ),
-        // Time Picker
+        
         ListTile(
           title: Text("Time: ${_selectedTime.format(context)}"),
           trailing: const Icon(Icons.access_time),
@@ -442,7 +442,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String generatedCode = _generateJoinCode();
 
-    // Combine selected date and time
+    
     DateTime endTime = DateTime(
       _selectedDate.year,
       _selectedDate.month,

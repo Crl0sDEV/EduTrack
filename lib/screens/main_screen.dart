@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:unitrack/screens/auth_screen.dart';
-import 'package:google_fonts/google_fonts.dart'; // Import Google Fonts
+import 'package:google_fonts/google_fonts.dart'; 
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -58,7 +58,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF002600), // Slightly Darker Green
+      backgroundColor: const Color(0xFF002600), 
       body: Center(
         child: AnimatedBuilder(
           animation: _controller,
@@ -73,7 +73,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
                     const Text(
                       'Welcome',
                       style: TextStyle(
-                        fontSize: 42, // Increased for better visibility
+                        fontSize: 42, 
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
                       ),
@@ -82,7 +82,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
                     const Text(
                       'to',
                       style: TextStyle(
-                        fontSize: 36, // Slightly larger
+                        fontSize: 36, 
                         fontWeight: FontWeight.w500,
                         color: Colors.white,
                       ),
@@ -91,10 +91,10 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
                     Text(
                       'EduTrack',
                       style: GoogleFonts.lobsterTwo(
-                        fontSize: 60, // Bigger for a more striking look
+                        fontSize: 60, 
                         fontWeight: FontWeight.bold,
-                        fontStyle: FontStyle.italic, // Italic for elegance
-                        color: const Color(0xFFFFC72C), // Slightly richer dandelion
+                        fontStyle: FontStyle.italic, 
+                        color: const Color(0xFFFFC72C), 
                       ),
                     ),
                   ],

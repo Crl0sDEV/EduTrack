@@ -20,7 +20,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isLogin = true;
   bool _isPasswordVisible = false;
-  String _userType = "Student"; // Default user type
+  String _userType = "Student"; 
 
   Future<void> _authenticate() async {
   String email = _emailController.text.trim();
@@ -40,13 +40,13 @@ class _AuthScreenState extends State<AuthScreen> {
   try {
     UserCredential userCredential;
     if (_isLogin) {
-      // Login logic
+      
       userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Fetch user type
+      
       DocumentSnapshot userDoc = await _firestore
           .collection("users")
           .doc(userCredential.user!.uid)
@@ -55,7 +55,7 @@ class _AuthScreenState extends State<AuthScreen> {
         _userType = userDoc["userType"];
       }
 
-      // ✅ Show Success Message for Login
+      
       Fluttertoast.showToast(
         msg: "Login successful!",
         toastLength: Toast.LENGTH_LONG,
@@ -64,13 +64,13 @@ class _AuthScreenState extends State<AuthScreen> {
         textColor: Colors.white,
       );
     } else {
-      // Sign-up logic
+      
       userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Store user data in Firestore
+      
       await _firestore.collection("users").doc(userCredential.user!.uid).set({
         "email": email,
         "uid": userCredential.user!.uid,
@@ -78,7 +78,7 @@ class _AuthScreenState extends State<AuthScreen> {
         "createdAt": FieldValue.serverTimestamp(),
       });
 
-      // ✅ Show Success Message for Sign-Up
+      
       Fluttertoast.showToast(
         msg: "Account created successfully!",
         toastLength: Toast.LENGTH_LONG,
@@ -88,13 +88,13 @@ class _AuthScreenState extends State<AuthScreen> {
       );
     }
 
-    // Navigate to HomeScreen with user type
+    
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => HomeScreen(userType: _userType)),
     );
   } catch (e) {
-    // ❌ Show Error Message
+    
     Fluttertoast.showToast(
       msg: "Error: ${e.toString()}",
       toastLength: Toast.LENGTH_LONG,
@@ -108,31 +108,31 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Dark background
+      backgroundColor: Colors.white, 
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(20.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // EduTracker Title
+              
               Text(
                 "EduTrack",
                 style: GoogleFonts.lobsterTwo(
                   fontSize: 48,
                   fontWeight: FontWeight.bold,
                   fontStyle: FontStyle.italic,
-                  color: const Color(0xFFFFC107), // Dandelion color
+                  color: const Color(0xFFFFC107), 
                 ),
               ),
               const SizedBox(height: 30),
 
-              // Authentication Form Box
+              
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(10), // Smooth borders
+                  borderRadius: BorderRadius.circular(10), 
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.1),
@@ -154,7 +154,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const SizedBox(height: 15),
 
-                    // Password Field with Toggle
+                    
                     TextField(
                       controller: _passwordController,
                       obscureText: !_isPasswordVisible,
@@ -178,7 +178,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     const SizedBox(height: 15),
 
-                    // Dropdown for user type (Only in Sign-Up)
+                    
                     if (!_isLogin)
                       DropdownButtonFormField<String>(
                         value: _userType,
@@ -199,7 +199,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     const SizedBox(height: 20),
 
-                    // Auth Button (Moved closer to inputs)
+                    
                     ElevatedButton(
                       onPressed: _authenticate,
                       style: ElevatedButton.styleFrom(
@@ -216,10 +216,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: Text(_isLogin ? "Login" : "Sign Up"),
                     ),
 
-// Increased space between button and toggle text
+
                     const SizedBox(height: 30),
 
-// Toggle between Login and Sign-Up (Left-aligned, Colored Text)
+
                     Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton(

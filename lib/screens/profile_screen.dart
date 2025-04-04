@@ -24,17 +24,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final bytes = await imageFile.readAsBytes();
 
-      // First verify the image can be decoded
+      
       final decodedImage = img.decodeImage(bytes);
       if (decodedImage == null) {
         throw Exception('Failed to decode image');
       }
 
-      // Compress image to max 200px width (maintaining aspect ratio) and 85% quality
+      
       final resizedImage = img.copyResize(
         decodedImage,
         width: 200,
-        height: 200, // Set both width and height to maintain aspect ratio
+        height: 200, 
       );
 
       final compressedBytes = img.encodeJpg(resizedImage, quality: 85);
@@ -54,15 +54,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   try {
     final pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 80, // Reduce quality before we even get the file
-      maxWidth: 800,    // Limit size
+      imageQuality: 80, 
+      maxWidth: 800,    
     );
     
     if (pickedFile == null) return;
 
     _imageFile = File(pickedFile.path);
     
-    // Verify the file exists and is readable
+    
     if (!await _imageFile!.exists()) {
       throw Exception('Selected file does not exist');
     }
@@ -207,7 +207,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: ElevatedButton(
                       onPressed: () {
-                        // Add edit profile functionality here
+                        
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Color(0xFFFFC107),
