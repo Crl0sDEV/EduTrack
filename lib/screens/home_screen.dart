@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,9 +23,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _groupNameController = TextEditingController();
   final TextEditingController _joinCodeController = TextEditingController();
-
+  StreamSubscription<DocumentSnapshot>? _userDataSubscription;
   final DateTime _startTime = DateTime.now();
-  String _userName = "Unknown";
+  String _userName = "";
   TimeOfDay _selectedTime = TimeOfDay.now();
   DateTime _selectedDate = DateTime.now();
 
@@ -33,6 +34,15 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _deleteExpiredGroups();
     _fetchUserName();
+    _setupUserDataListener();
+  }
+
+  @override
+  void dispose() {
+    _userDataSubscription?.cancel();
+    _groupNameController.dispose();
+    _joinCodeController.dispose();
+    super.dispose();
   }
 
   @override
@@ -64,7 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      drawer: _buildDrawer(),
+      drawer: _buildDrawer(context),
       body: _buildGroupList(),
       floatingActionButton: FloatingActionButton(
         onPressed: _showModal,
@@ -74,34 +84,69 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildDrawer() {
+  Widget _buildDrawer(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          const DrawerHeader(
-            decoration: BoxDecoration(color: Color(0xFFFFC107)),
-            child: Text("Navigation",
-                style: TextStyle(color: Colors.white, fontSize: 24)),
+          DrawerHeader(
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Color(0xFFFFC107),
+                  child: Text(
+                    _userName.isNotEmpty ? _userName[0].toUpperCase() : "U",
+                    style: TextStyle(
+                      fontSize: 24,
+                      color: colorScheme.onPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _userName,
+                  style: theme.textTheme.titleMedium,
+                ),
+                Text(
+                  widget.userType,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
           ),
           ListTile(
+            leading: Icon(Icons.home, color: colorScheme.onSurface),
             title: const Text("Home"),
             onTap: () {
-              Navigator.pop(context); 
+              Navigator.pop(context);
             },
           ),
           ListTile(
+            leading: Icon(Icons.person, color: colorScheme.onSurface),
             title: const Text("Profile"),
             onTap: () {
-              Navigator.pop(context); 
+              Navigator.pop(context);
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const ProfileScreen()),
               );
             },
           ),
+          const Divider(),
           ListTile(
-            title: const Text("Logout"),
+            leading: Icon(Icons.logout, color: colorScheme.error),
+            title: Text(
+              "Logout",
+              style: TextStyle(color: colorScheme.error),
+            ),
             onTap: () async {
               await _auth.signOut();
               if (context.mounted) {
@@ -135,7 +180,8 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         return ListView(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.fromLTRB(
+              16, 10, 16, 10), // Left, Top, Right, Bottom
           children: snapshot.data!.docs.map((doc) {
             var data = doc.data() as Map<String, dynamic>;
             return _buildGroupCard(doc.id, data);
@@ -154,23 +200,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildGroupCard(String groupId, Map<String, dynamic> groupData) {
-    
     return StreamBuilder<DocumentSnapshot>(
       stream: _firestore.collection('groups').doc(groupId).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const SizedBox.shrink(); 
+          return const SizedBox.shrink();
         }
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
 
-        
         if (data['endTime'] == null || !(data['endTime'] is Timestamp)) {
           return Card(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             elevation: 5,
-            margin: const EdgeInsets.symmetric(vertical: 8),
+            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
             child: const Padding(
               padding: EdgeInsets.all(15),
               child: Text("Group has invalid end time format"),
@@ -184,14 +228,12 @@ class _HomeScreenState extends State<HomeScreen> {
         final isExpired = timeRemaining.isNegative;
         final isExpiringSoon = !isExpired && timeRemaining.inMinutes <= 60;
 
-        
         String formatExpirationTime(DateTime date) {
           final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
           final ampm = date.hour < 12 ? 'AM' : 'PM';
           return '${date.month}/${date.day}/${date.year} at $hour:${date.minute.toString().padLeft(2, '0')} $ampm';
         }
 
-        
         if (isExpired) {
           return const SizedBox.shrink();
         }
@@ -218,8 +260,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: const TextStyle(
                           fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 5),
-
-                  
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -235,9 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 5),
-                  
                   Row(
                     children: [
                       const Icon(Icons.access_time,
@@ -250,7 +288,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
-
                   if (isExpiringSoon)
                     Padding(
                       padding: const EdgeInsets.only(top: 5),
@@ -269,61 +306,92 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  
+  void _setupUserDataListener() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    _userDataSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists) {
+        final userData = snapshot.data() as Map<String, dynamic>;
+        if (mounted) {
+          setState(() {
+            _userName = userData['name'] ??
+                userData['email']?.split('@').first ??
+                'Unknown';
+          });
+        }
+      }
+    });
+  }
+
   Future<void> _fetchUserName() async {
     try {
-      final userDoc = await _firestore
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final userDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(_auth.currentUser!.uid)
+          .doc(user.uid)
           .get();
 
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>;
-        setState(() {
-          _userName = userData['name'] ??
-              userData['email']?.split('@').first ??
-              'Unknown';
-        });
+        if (mounted) {
+          setState(() {
+            _userName = userData['name'] ??
+                userData['email']?.split('@').first ??
+                'Unknown';
+          });
+        }
       } else {
-        
-        setState(() {
-          _userName = _auth.currentUser!.email?.split('@').first ?? 'Unknown';
-        });
+        if (mounted) {
+          setState(() {
+            _userName = user.email?.split('@').first ?? 'Unknown';
+          });
+        }
       }
     } catch (e) {
-      setState(() {
-        _userName = _auth.currentUser!.email?.split('@').first ?? 'Unknown';
-      });
+      if (mounted) {
+        setState(() {
+          _userName =
+              FirebaseAuth.instance.currentUser?.email?.split('@').first ??
+                  'Unknown';
+        });
+      }
     }
   }
 
   void _deleteExpiredGroups() async {
-  QuerySnapshot groups = await _firestore.collection("groups").get();
-  DateTime now = DateTime.now();
+    QuerySnapshot groups = await _firestore.collection("groups").get();
+    DateTime now = DateTime.now();
 
-  for (var doc in groups.docs) {
-    var data = doc.data() as Map<String, dynamic>;
-    
-    
-    if (data["endTime"] == null || !(data["endTime"] is Timestamp)) {
-      print("Group with invalid endTime found: ${data["groupName"] ?? "Unknown"}");
-      continue; 
-    }
-    
-    DateTime endTime = data["endTime"].toDate();
+    for (var doc in groups.docs) {
+      var data = doc.data() as Map<String, dynamic>;
 
-    if (endTime.isBefore(now)) {
-      await _firestore.collection("groups").doc(doc.id).delete();
-      print("Deleted expired group: ${data["groupName"]}");
+      if (data["endTime"] == null || !(data["endTime"] is Timestamp)) {
+        print(
+            "Group with invalid endTime found: ${data["groupName"] ?? "Unknown"}");
+        continue;
+      }
+
+      DateTime endTime = data["endTime"].toDate();
+
+      if (endTime.isBefore(now)) {
+        await _firestore.collection("groups").doc(doc.id).delete();
+        print("Deleted expired group: ${data["groupName"]}");
+      }
     }
   }
-}
 
   void _showToast(String message) {
     Fluttertoast.showToast(
       msg: message,
       toastLength: Toast.LENGTH_LONG,
-      gravity: ToastGravity.TOP, 
+      gravity: ToastGravity.TOP,
       backgroundColor: Color(0xFFFFC107),
       textColor: Colors.white,
       fontSize: 16.0,
@@ -388,14 +456,12 @@ class _HomeScreenState extends State<HomeScreen> {
               labelText: "Group Name", border: OutlineInputBorder()),
         ),
         const SizedBox(height: 15),
-        
         ListTile(
           title:
               Text("Date: ${_selectedDate.toLocal().toString().split(' ')[0]}"),
           trailing: const Icon(Icons.calendar_today),
           onTap: () => selectDate(context),
         ),
-        
         ListTile(
           title: Text("Time: ${_selectedTime.format(context)}"),
           trailing: const Icon(Icons.access_time),
@@ -442,7 +508,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String generatedCode = _generateJoinCode();
 
-    
     DateTime endTime = DateTime(
       _selectedDate.year,
       _selectedDate.month,

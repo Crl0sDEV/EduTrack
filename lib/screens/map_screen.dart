@@ -7,6 +7,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:logger/logger.dart';
+import 'package:intl/intl.dart';
+import 'package:badges/badges.dart' as badges;
 
 class MapScreen extends StatefulWidget {
   final String groupId;
@@ -23,33 +25,37 @@ class _MapScreenState extends State<MapScreen> {
   bool _isMapReady = false;
   StreamSubscription<DocumentSnapshot>? _groupSubscription;
   StreamSubscription<Position>? _positionStreamSubscription;
+  // Add to your state class
+  StreamSubscription<QuerySnapshot>? _emergencyAlertsSubscription;
+  List<DocumentSnapshot> _emergencyAlerts = [];
+  bool _hasNewEmergency = false;
 
-  LatLng _currentLocation =
-      LatLng(14.966059, 120.955091); 
+  LatLng _currentLocation = LatLng(14.966059, 120.955091);
   final String? _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
-  
   final LatLngBounds _schoolBounds = LatLngBounds(
-    LatLng(14.9655, 120.9545), 
-    LatLng(14.9668, 120.9557), 
+    LatLng(14.9655, 120.9545),
+    LatLng(14.9668, 120.9557),
   );
 
-  
   late final LatLng _schoolCenter = LatLng(
     (_schoolBounds.south + _schoolBounds.north) / 2,
     (_schoolBounds.west + _schoolBounds.east) / 2,
   );
 
-  
   String? _teacherId;
   List<String> _memberIds = [];
   bool _isLoadingGroup = true;
   bool _isLocationLoading = false;
+  bool get _isStudent {
+    return _teacherId != null && _currentUserId != _teacherId;
+  }
 
   @override
   void initState() {
     super.initState();
     _setupGroupListener();
+    _setupEmergencyAlertsListener();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateUserLocation();
     });
@@ -59,6 +65,7 @@ class _MapScreenState extends State<MapScreen> {
   void dispose() {
     _groupSubscription?.cancel();
     _positionStreamSubscription?.cancel();
+    _emergencyAlertsSubscription?.cancel();
     super.dispose();
   }
 
@@ -78,7 +85,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _processGroupData(Map<String, dynamic> data) {
     final newMemberIds = List<String>.from(data['members'] ?? []);
-    final newTeacherId = data['createdBy'] as String?;
+    final newTeacherId = data['createdBy'] as String?; // Using createdBy
 
     if (newTeacherId != null && !newMemberIds.contains(newTeacherId)) {
       newMemberIds.add(newTeacherId);
@@ -91,12 +98,11 @@ class _MapScreenState extends State<MapScreen> {
         _isLoadingGroup = false;
       });
     }
-    logger.d("Updated group data - Teacher: $_teacherId, Members: $_memberIds");
   }
 
   Future<void> _verifyGroupMembership() async {
     if (_currentUserId == null) return;
-    
+
     try {
       final groupDoc = await FirebaseFirestore.instance
           .collection('groups')
@@ -116,7 +122,8 @@ class _MapScreenState extends State<MapScreen> {
           logger.w("User $_currentUserId not in group members: $members");
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("You're not in this group's member list")),
+              const SnackBar(
+                  content: Text("You're not in this group's member list")),
             );
           }
           return;
@@ -135,7 +142,12 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  void _handleNewPosition(Position position) {
+  void _handleNewPosition(Position? position) {
+    if (position == null) {
+      logger.w("Received null position update");
+      return;
+    }
+
     LatLng newLocation = LatLng(position.latitude, position.longitude);
 
     if (_schoolBounds.contains(newLocation)) {
@@ -193,7 +205,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _updateUserLocation() async {
     if (_isLocationLoading) return;
-    
+
     setState(() {
       _isLocationLoading = true;
     });
@@ -206,7 +218,6 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         bool enabled = await Geolocator.openLocationSettings();
@@ -236,7 +247,8 @@ class _MapScreenState extends State<MapScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text("Location Permission Required"),
-            content: const Text("Please enable location permissions in app settings"),
+            content: const Text(
+                "Please enable location permissions in app settings"),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -252,7 +264,6 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      
       Position? position;
       try {
         position = await Geolocator.getCurrentPosition(
@@ -266,7 +277,6 @@ class _MapScreenState extends State<MapScreen> {
         logger.e("Position error: $e");
       }
 
-      
       if (position == null) {
         try {
           position = await Geolocator.getLastKnownPosition();
@@ -274,7 +284,8 @@ class _MapScreenState extends State<MapScreen> {
             logger.w("No position available");
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Could not determine your location")),
+                const SnackBar(
+                    content: Text("Could not determine your location")),
               );
             }
             return;
@@ -287,14 +298,12 @@ class _MapScreenState extends State<MapScreen> {
 
       _handleNewPosition(position);
 
-      
       _positionStreamSubscription?.cancel();
 
-      
       _positionStreamSubscription = Geolocator.getPositionStream(
         locationSettings: LocationSettings(
           accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 10, 
+          distanceFilter: 10,
           timeLimit: const Duration(seconds: 30),
         ),
       ).listen(
@@ -309,7 +318,6 @@ class _MapScreenState extends State<MapScreen> {
         },
         cancelOnError: false,
       );
-
     } catch (e) {
       logger.e("Error in location updates: $e");
       if (mounted) {
@@ -326,21 +334,20 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  
   Future<String> _getUserName(String userId) async {
     try {
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
           .get();
-      
+
       if (userDoc.exists && userDoc.data()!.containsKey('name')) {
         final name = userDoc.data()!['name'] as String?;
         if (name != null && name.isNotEmpty) {
           return name;
         }
       }
-      
+
       return "Unknown";
     } catch (e) {
       logger.e("Error fetching user name: $e");
@@ -362,11 +369,11 @@ class _MapScreenState extends State<MapScreen> {
       final allUserIds = {..._memberIds};
       if (_teacherId != null) allUserIds.add(_teacherId!);
 
-      
       final userNameFutures = allUserIds.map((userId) async {
         final name = await _getUserName(userId);
-        
-        final locationDoc = locationDocs.docs.where((doc) => doc.id == userId).firstOrNull;
+
+        final locationDoc =
+            locationDocs.docs.where((doc) => doc.id == userId).firstOrNull;
 
         LatLng location = locationDoc != null
             ? LatLng(locationDoc['latitude'], locationDoc['longitude'])
@@ -381,7 +388,6 @@ class _MapScreenState extends State<MapScreen> {
         );
       }).toList();
 
-      
       users = await Future.wait(userNameFutures);
 
       users.sort((a, b) {
@@ -437,7 +443,8 @@ class _MapScreenState extends State<MapScreen> {
                     final user = users[index];
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: user.isTeacher ? Colors.orange : Colors.blue,
+                        backgroundColor:
+                            user.isTeacher ? Colors.orange : Colors.blue,
                         child: Icon(
                           user.isTeacher ? Icons.school : Icons.person,
                           color: Colors.white,
@@ -469,6 +476,187 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  void _showEmergencyDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Emergency Alert"),
+        content: const Text(
+            "Are you sure you want to send an emergency alert to your teacher?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              _sendEmergencyAlert();
+              Navigator.pop(context);
+            },
+            child:
+                const Text("Send Alert", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _sendEmergencyAlert() async {
+    if (_teacherId == null || _currentUserId == null) return;
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(_currentUserId)
+          .get();
+
+      await FirebaseFirestore.instance.collection('emergency_alerts').add({
+        'studentId': _currentUserId,
+        'studentName': userDoc.get('name') ?? 'Unknown', // Add student name
+        'createdBy': _teacherId,
+        'groupId': widget.groupId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'location':
+            GeoPoint(_currentLocation.latitude, _currentLocation.longitude),
+        'status': 'pending',
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Emergency alert sent to teacher!"),
+          backgroundColor: Colors.red,
+        ),
+      );
+
+      await FirebaseFirestore.instance
+          .collection('groups')
+          .doc(widget.groupId)
+          .update({
+        'lastEmergency': FieldValue.serverTimestamp(),
+        'emergencyStudentId': _currentUserId,
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to send alert: ${e.toString()}"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _setupEmergencyAlertsListener() {
+    if (_teacherId == null) {
+      Future.delayed(const Duration(seconds: 1), _setupEmergencyAlertsListener);
+      return;
+    }
+
+    if (_currentUserId != _teacherId) return;
+
+    _emergencyAlertsSubscription?.cancel();
+
+    _emergencyAlertsSubscription = FirebaseFirestore.instance
+        .collection('emergency_alerts')
+        .where('createdBy',
+            isEqualTo: _teacherId) // Now matches groups collection
+        .where('status', isEqualTo: 'pending')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _emergencyAlerts = snapshot.docs;
+          _hasNewEmergency = snapshot.docs.isNotEmpty;
+        });
+      }
+    }, onError: (error) {
+      logger.e("Emergency alerts listener error: $error");
+    });
+  }
+
+  Future<void> _markAlertAsResponded(String alertId) async {
+    await FirebaseFirestore.instance
+        .collection('emergency_alerts')
+        .doc(alertId)
+        .update({'status': 'responded'});
+  }
+
+  void _showEmergencyAlertsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Emergency Alerts"),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: _emergencyAlerts.isEmpty
+              ? const Text("No active emergency alerts")
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _emergencyAlerts.length,
+                  itemBuilder: (context, index) {
+                    final alert =
+                        _emergencyAlerts[index].data() as Map<String, dynamic>;
+                    return FutureBuilder<DocumentSnapshot>(
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(alert['studentId'] as String)
+                          .get(),
+                      builder: (context, snapshot) {
+                        // Handle all possible cases
+                        if (!snapshot.hasData) {
+                          return ListTile(
+                            leading:
+                                const Icon(Icons.emergency, color: Colors.red),
+                            title: const Text("Loading..."),
+                          );
+                        }
+
+                        final userData =
+                            snapshot.data!.data() as Map<String, dynamic>?;
+                        final studentName = userData?['name'] as String? ??
+                            userData?['email']?.toString().split('@').first ??
+                            'Unknown student';
+
+                        return ListTile(
+                          leading:
+                              const Icon(Icons.emergency, color: Colors.red),
+                          title: Text(studentName),
+                          subtitle: Text(
+                            "Sent ${DateFormat('MMM d, h:mm a').format((alert['timestamp'] as Timestamp).toDate())}",
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.location_on),
+                            onPressed: () {
+                              final location = alert['location'] as GeoPoint;
+                              _navigateToUserLocation(LatLng(
+                                  location.latitude, location.longitude));
+                              Navigator.pop(context);
+                            },
+                          ),
+                          onTap: () async {
+                            await _markAlertAsResponded(
+                                _emergencyAlerts[index].id);
+                            final location = alert['location'] as GeoPoint;
+                            _navigateToUserLocation(
+                                LatLng(location.latitude, location.longitude));
+                            Navigator.pop(context);
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close"),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -489,10 +677,12 @@ class _MapScreenState extends State<MapScreen> {
               if (locationSnapshot.hasError) {
                 logger.e("❌ Firestore Error: ${locationSnapshot.error}");
                 return Center(
-                    child: Text("❌ Firestore Error: ${locationSnapshot.error}"));
+                    child:
+                        Text("❌ Firestore Error: ${locationSnapshot.error}"));
               }
 
-              if (!locationSnapshot.hasData || locationSnapshot.data!.docs.isEmpty) {
+              if (!locationSnapshot.hasData ||
+                  locationSnapshot.data!.docs.isEmpty) {
                 return const Center(child: Text("ℹ️ No locations found."));
               }
 
@@ -549,7 +739,8 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate: "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                    urlTemplate:
+                        "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
                     subdomains: const ['a', 'b', 'c'],
                     tileProvider: CancellableNetworkTileProvider(),
                     userAgentPackageName: 'com.example.unitrack',
@@ -585,8 +776,8 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           Positioned(
-            bottom: 16,
-            right: 16,
+            top: 60,
+            right: 10,
             child: FloatingActionButton(
               heroTag: "map_screen_fab",
               mini: true,
@@ -595,6 +786,37 @@ class _MapScreenState extends State<MapScreen> {
               child: const Icon(Icons.crop_free, color: Color(0xFFFFC107)),
             ),
           ),
+          if (_isStudent)
+            Positioned(
+              top: 110, // Positioned above the other FAB
+              right: 10,
+              child: FloatingActionButton(
+                mini: true,
+                heroTag: "emergency_fab",
+                backgroundColor: Colors.red,
+                onPressed: () {
+                  _showEmergencyDialog();
+                },
+                child: const Icon(Icons.emergency, color: Colors.white),
+              ),
+            ),
+          // Replace the existing teacher FAB with this:
+          if (!_isStudent && _teacherId == _currentUserId && _hasNewEmergency)
+            Positioned(
+              top: 110,
+              right: 10,
+              child: FloatingActionButton(
+                heroTag: "emergency_notification",
+                mini: true,
+                backgroundColor: Colors.red,
+                onPressed: _showEmergencyAlertsDialog,
+                child: const badges.Badge(
+                  badgeContent:
+                      Text('!', style: TextStyle(color: Colors.white)),
+                  child: Icon(Icons.notifications, color: Colors.white),
+                ),
+              ),
+            ),
         ],
       ),
     );
