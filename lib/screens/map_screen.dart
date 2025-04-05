@@ -29,14 +29,17 @@ class _MapScreenState extends State<MapScreen> {
   List<DocumentSnapshot> _emergencyAlerts = [];
   List<Marker> _emergencyMarkers = [];
   bool _hasNewEmergency = false;
+  bool _showSchoolBoundary = true;
+  bool _isMapLocked = false;
 
   LatLng _currentLocation = const LatLng(14.966059, 120.955091);
   final String? _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
   final LatLngBounds _schoolBounds = LatLngBounds(
-    const LatLng(14.9655, 120.9545),
-    const LatLng(14.9668, 120.9557),
+    const LatLng(14.9655, 120.9545), // SW corner
+    const LatLng(14.9668, 120.9557), // NE corner
   );
+  final double _schoolRadius = 100.0;
 
   late final LatLng _schoolCenter = LatLng(
     (_schoolBounds.south + _schoolBounds.north) / 2,
@@ -68,6 +71,21 @@ class _MapScreenState extends State<MapScreen> {
     _positionStreamSubscription?.cancel();
     _emergencyAlertsSubscription?.cancel();
     super.dispose();
+  }
+
+  void _toggleSchoolBoundary() {
+    setState(() {
+      _showSchoolBoundary = !_showSchoolBoundary;
+    });
+  }
+
+  void _toggleMapLock() {
+    setState(() {
+      _isMapLocked = !_isMapLocked;
+      if (_isMapLocked) {
+        _fitMapToSchoolBounds(); // Snap back to bounds when locked
+      }
+    });
   }
 
   void _setupGroupListener() {
@@ -232,7 +250,7 @@ class _MapScreenState extends State<MapScreen> {
         _schoolBounds,
         options: const FitBoundsOptions(
           padding: EdgeInsets.all(20.0),
-          maxZoom: 18.0,
+          maxZoom: 18.5, // Tighter zoom
         ),
       );
       setState(() {
@@ -241,7 +259,7 @@ class _MapScreenState extends State<MapScreen> {
     } catch (e) {
       logger.e("❌ Error fitting map to bounds: $e");
       try {
-        _mapController.move(_schoolCenter, 17.5);
+        _mapController.move(_schoolCenter, 18.0); // Higher zoom level
       } catch (e) {
         logger.e("❌ Error moving map: $e");
       }
@@ -673,13 +691,13 @@ class _MapScreenState extends State<MapScreen> {
     _emergencyAlertsSubscription?.cancel();
 
     _emergencyAlertsSubscription = FirebaseFirestore.instance
-    .collection('emergency_alerts')
-    .where('createdBy', isEqualTo: _teacherId)
-    .where('groupId', isEqualTo: widget.groupId)
-    .where('status', isEqualTo: 'pending')
-    .orderBy('timestamp', descending: true)
-    .snapshots()
-    .listen((snapshot) {
+        .collection('emergency_alerts')
+        .where('createdBy', isEqualTo: _teacherId)
+        .where('groupId', isEqualTo: widget.groupId)
+        .where('status', isEqualTo: 'pending')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen((snapshot) {
       if (!mounted) return; // Check mounted first
       setState(() {
         _emergencyAlerts = snapshot.docs;
@@ -687,7 +705,8 @@ class _MapScreenState extends State<MapScreen> {
       });
       _updateEmergencyMarkers();
     }, onError: (error) {
-      if (mounted) { // Check mounted for errors too
+      if (mounted) {
+        // Check mounted for errors too
         logger.e("Emergency alerts listener error: $error");
       }
     });
@@ -879,15 +898,34 @@ class _MapScreenState extends State<MapScreen> {
                 mapController: _mapController,
                 options: MapOptions(
                   initialCenter: _schoolCenter,
-                  initialZoom: 17.5,
-                  minZoom: 16.0,
+                  initialZoom: 18.0, // Increased from 17.5 to zoom in closer
+                  minZoom: 17.0, // Prevent zooming out too far
                   maxZoom: 19.0,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.all,
+                  interactionOptions: InteractionOptions(
+                    flags: _isMapLocked
+                        ? InteractiveFlag
+                            .none // Disable all interactions when locked
+                        : InteractiveFlag.all & ~InteractiveFlag.rotate,
                   ),
                   onMapReady: () {
                     if (!_isMapReady) {
                       _fitMapToSchoolBounds();
+                    }
+                  },
+                  onPositionChanged: (MapPosition position, bool hasGesture) {
+                    // Optional: You can add logic here to prevent panning outside bounds
+                    if ( _isMapLocked && hasGesture) {
+                      _fitMapToSchoolBounds();
+                      final currentBounds = position.bounds;
+                      if (!_schoolBounds.containsBounds(currentBounds!)) {
+                        // If user panned outside, gently nudge back
+                        Future.delayed(Duration.zero, () {
+                          _mapController.fitBounds(_schoolBounds,
+                              options: const FitBoundsOptions(
+                                padding: EdgeInsets.all(20.0),
+                              ));
+                        });
+                      }
                     }
                   },
                 ),
@@ -899,6 +937,19 @@ class _MapScreenState extends State<MapScreen> {
                     tileProvider: CancellableNetworkTileProvider(),
                     userAgentPackageName: 'com.example.unitrack',
                   ),
+                  if (_showSchoolBoundary)
+                    CircleLayer(
+                      circles: [
+                        CircleMarker(
+                          point: _schoolCenter,
+                          radius: _schoolRadius,
+                          useRadiusInMeter: true,
+                          color: Colors.blue.withOpacity(0.03),
+                          borderColor: Colors.blue,
+                          borderStrokeWidth: 2.0,
+                        ),
+                      ],
+                    ),
                   MarkerLayer(
                     markers: [
                       ...markers, // Your existing user markers
@@ -912,69 +963,118 @@ class _MapScreenState extends State<MapScreen> {
           Positioned(
             top: 10,
             right: 10,
-            child: FloatingActionButton(
-              mini: true,
-              backgroundColor: Colors.white,
-              onPressed: () async {
-                if (_isLoadingGroup) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Loading group data...')));
-                  return;
-                }
+            child: Tooltip(
+              message: 'View group members',
+              child: FloatingActionButton(
+                mini: true,
+                backgroundColor: Colors.white,
+                onPressed: () async {
+                  if (_isLoadingGroup) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Loading group data...')));
+                    return;
+                  }
 
-                final users = await _fetchAllUsers();
-                if (users.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('No users found')));
-                  return;
-                }
+                  final users = await _fetchAllUsers();
+                  if (users.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('No users found')));
+                    return;
+                  }
 
-                _showUserListDialog(users);
-              },
-              child: const Icon(Icons.people, color: Color(0xFFFFC107)),
+                  _showUserListDialog(users);
+                },
+                child: const Icon(Icons.people, color: Color(0xFFFFC107)),
+              ),
             ),
           ),
           Positioned(
             top: 60,
             right: 10,
-            child: FloatingActionButton(
-              heroTag: "map_screen_fab",
-              mini: true,
-              backgroundColor: Colors.white,
-              onPressed: _fitMapToSchoolBounds,
-              child: const Icon(Icons.crop_free, color: Color(0xFFFFC107)),
+            child: Tooltip(
+              message: 'Reset view to school area',
+              child: FloatingActionButton(
+                heroTag: "map_screen_fab",
+                mini: true,
+                backgroundColor: Colors.white,
+                onPressed: _fitMapToSchoolBounds,
+                child: const Icon(Icons.crop_free, color: Color(0xFFFFC107)),
+              ),
             ),
           ),
           if (_isStudent)
             Positioned(
               top: 110,
               right: 10,
-              child: FloatingActionButton(
-                mini: true,
-                heroTag: "emergency_fab",
-                backgroundColor: Colors.red,
-                onPressed: _showEmergencyDialog,
-                child: const Icon(Icons.emergency, color: Colors.white),
+              child: Tooltip(
+                message: 'Send emergency alert',
+                child: FloatingActionButton(
+                  mini: true,
+                  heroTag: "emergency_fab",
+                  backgroundColor: Colors.white,
+                  onPressed: _showEmergencyDialog,
+                  child: const Icon(Icons.emergency, color: Color(0xFFFFC107)),
+                ),
               ),
             ),
           if (!_isStudent && _teacherId == _currentUserId)
             Positioned(
               top: 110,
               right: 10,
-              child: FloatingActionButton(
-                heroTag: "emergency_notification",
-                mini: true,
-                backgroundColor: Colors.red,
-                onPressed: _showEmergencyAlertsDialog,
-                child: _hasNewEmergency
-                    ? const badges.Badge(
-                        badgeContent:
-                            Text('!', style: TextStyle(color: Colors.white)),
-                        child: Icon(Icons.notifications, color: Colors.white),
-                      )
-                    : const Icon(Icons.notifications, color: Colors.white),
+              child: Tooltip(
+                message: 'View emergency alerts',
+                child: FloatingActionButton(
+                  heroTag: "emergency_notification",
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _showEmergencyAlertsDialog,
+                  child: _hasNewEmergency
+                      ? const badges.Badge(
+                          badgeContent:
+                              Text('!', style: TextStyle(color: Colors.red)),
+                          child: Icon(Icons.notifications, color: Colors.red),
+                        )
+                      : const Icon(Icons.notifications,
+                          color: Color(0xFFFFC107)),
+                ),
               ),
             ),
+          Positioned(
+            top: 160, // Below the emergency button
+            right: 10,
+            child: Tooltip(
+              message: _showSchoolBoundary
+                  ? 'Hide school boundary'
+                  : 'Show school boundary',
+              child: FloatingActionButton(
+                heroTag: "boundary_toggle",
+                mini: true,
+                backgroundColor: Colors.white,
+                onPressed: _toggleSchoolBoundary,
+                child: Icon(
+                  _showSchoolBoundary ? Icons.layers_clear : Icons.layers,
+                  color: Color(0xFFFFC107),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 210, // Position below the boundary toggle button
+            right: 10,
+            child: Tooltip(
+              message: _isMapLocked ? 'Unlock map' : 'Lock map to school area',
+              child: FloatingActionButton(
+                heroTag: "map_lock",
+                mini: true,
+                backgroundColor: Colors.white,
+                onPressed: _toggleMapLock,
+                child: Icon(
+                  _isMapLocked ? Icons.lock : Icons.lock_open,
+                  color: Color(0xFFFFC107),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
