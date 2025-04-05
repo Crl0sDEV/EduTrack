@@ -31,6 +31,9 @@ class _MapScreenState extends State<MapScreen> {
   bool _hasNewEmergency = false;
   bool _showSchoolBoundary = true;
   bool _isMapLocked = false;
+  bool _areFabsVisible = true;
+  double _fabsScale = 1.0;
+  double _toggleButtonRotation = 0.0;
   DateTime? _lastToggleTime;
 
   LatLng _currentLocation =
@@ -79,6 +82,21 @@ class _MapScreenState extends State<MapScreen> {
     super.dispose();
   }
 
+  void _toggleFabsVisibility() {
+    setState(() {
+      _areFabsVisible = !_areFabsVisible;
+      _toggleButtonRotation = _areFabsVisible ? 0.0 : 180.0;
+
+      // Scale animation when hiding
+      if (!_areFabsVisible) {
+        _fabsScale = 0.8;
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (mounted) setState(() => _fabsScale = 1.0);
+        });
+      }
+    });
+  }
+
   void _toggleSchoolBoundary() {
     setState(() {
       _showSchoolBoundary = !_showSchoolBoundary;
@@ -92,7 +110,7 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
     _lastToggleTime = DateTime.now();
-    
+
     setState(() {
       _isMapLocked = !_isMapLocked;
       if (_isMapLocked) {
@@ -102,17 +120,17 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _setupLocationListener() {
-  FirebaseFirestore.instance
-      .collection('groups')
-      .doc(widget.groupId)
-      .collection('locations')
-      .snapshots()
-      .listen((snapshot) {
-    _updateMarkers(); // This will update the markers whenever locations change
-  }, onError: (error) {
-    logger.e("Location listener error: $error");
-  });
-}
+    FirebaseFirestore.instance
+        .collection('groups')
+        .doc(widget.groupId)
+        .collection('locations')
+        .snapshots()
+        .listen((snapshot) {
+      _updateMarkers(); // This will update the markers whenever locations change
+    }, onError: (error) {
+      logger.e("Location listener error: $error");
+    });
+  }
 
   void _setupGroupListener() {
     _groupSubscription = FirebaseFirestore.instance
@@ -312,7 +330,7 @@ class _MapScreenState extends State<MapScreen> {
         _schoolBounds,
         options: const FitBoundsOptions(
           padding: EdgeInsets.all(20.0),
-          maxZoom: 18.5,
+          maxZoom: 17.7,
         ),
       );
       setState(() {
@@ -321,7 +339,7 @@ class _MapScreenState extends State<MapScreen> {
     } catch (e) {
       logger.e("❌ Error fitting map to bounds: $e");
       try {
-        _mapController.move(_schoolCenter, 18.0);
+        _mapController.move(_schoolCenter, 17.7);
       } catch (e) {
         logger.e("❌ Error moving map: $e");
       }
@@ -522,7 +540,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _navigateToUserLocation(LatLng location) {
     try {
-      _mapController.move(location, 18.0);
+      _mapController.move(location, 17.7);
     } catch (e) {
       logger.e("❌ Error navigating to user location: $e");
     }
@@ -540,7 +558,7 @@ class _MapScreenState extends State<MapScreen> {
       Navigator.of(context).pop();
 
       Future.delayed(const Duration(milliseconds: 300), () {
-        _mapController.move(location, 18.0);
+        _mapController.move(location, 17.5);
 
         final highlightMarker = Marker(
           point: location,
@@ -906,117 +924,206 @@ class _MapScreenState extends State<MapScreen> {
               }
             },
           ),
+          if (_areFabsVisible)
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 80,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerRight,
+                    end: Alignment.centerLeft,
+                    colors: [
+                      Colors.white.withOpacity(0.3),
+                      Colors.white.withOpacity(0.1),
+                      Colors.transparent,
+                    ],
+                    stops: [0.0, 0.5, 1.0],
+                  ),
+                ),
+              ),
+            ),
+
+          // Toggle FABs button with rotation
           Positioned(
             top: 10,
             right: 10,
             child: Tooltip(
-              message: 'View group members',
-              child: FloatingActionButton(
-                mini: true,
-                backgroundColor: Colors.white,
-                onPressed: () async {
-                  if (_isLoadingGroup) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Loading group data...')));
-                    return;
-                  }
-
-                  final users = await _fetchAllUsers();
-                  if (users.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('No users found')));
-                    return;
-                  }
-
-                  _showUserListDialog(users);
-                },
-                child: const Icon(Icons.people, color: Color(0xFFFFC107)),
+              message: _areFabsVisible ? 'Hide controls' : 'Show controls',
+              child: AnimatedRotation(
+                duration: const Duration(milliseconds: 300),
+                turns: _toggleButtonRotation / 360,
+                child: FloatingActionButton(
+                  heroTag: "toggle_fab",  
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _toggleFabsVisibility,
+                  child: const Icon(
+                    Icons.arrow_forward,
+                    color: Color(0xFFFFC107),
+                  ),
+                ),
               ),
             ),
           ),
-          Positioned(
+
+          // Group Members FAB with scale animation
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
             top: 60,
-            right: 10,
-            child: Tooltip(
-              message: 'Reset view to school area',
-              child: FloatingActionButton(
-                heroTag: "map_screen_fab",
-                mini: true,
-                backgroundColor: Colors.white,
-                onPressed: _fitMapToSchoolBounds,
-                child: const Icon(Icons.crop_free, color: Color(0xFFFFC107)),
+            right: _areFabsVisible ? 10 : -60,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 200),
+              scale: _fabsScale,
+              child: Tooltip(
+                message: 'View group members',
+                child: FloatingActionButton(
+                  heroTag: "group_members_fab",
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: () async {
+                    if (_isLoadingGroup) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Loading group data...')));
+                      return;
+                    }
+                    final users = await _fetchAllUsers();
+                    if (users.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('No users found')));
+                      return;
+                    }
+                    _showUserListDialog(users);
+                  },
+                  child: const Icon(Icons.people, color: Color(0xFFFFC107)),
+                ),
               ),
             ),
           ),
+
+          // Reset View FAB with scale animation
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            top: 110,
+            right: _areFabsVisible ? 10 : -60,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 200),
+              scale: _fabsScale,
+              child: Tooltip(
+                message: 'Reset view to school area',
+                child: FloatingActionButton(
+                  heroTag: "map_screen_fab",
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _fitMapToSchoolBounds,
+                  child: const Icon(Icons.crop_free, color: Color(0xFFFFC107)),
+                ),
+              ),
+            ),
+          ),
+
+          // Emergency Alert FAB (Student) with scale animation
           if (_isStudent)
-            Positioned(
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
               top: 110,
-              right: 10,
-              child: Tooltip(
-                message: 'Send emergency alert',
-                child: FloatingActionButton(
-                  mini: true,
-                  heroTag: "emergency_fab",
-                  backgroundColor: Colors.white,
-                  onPressed: _showEmergencyDialog,
-                  child: const Icon(Icons.emergency, color: Color(0xFFFFC107)),
+              right: _areFabsVisible ? 10 : -60,
+              child: AnimatedScale(
+                duration: const Duration(milliseconds: 200),
+                scale: _fabsScale,
+                child: Tooltip(
+                  message: 'Send emergency alert',
+                  child: FloatingActionButton(
+                    mini: true,
+                    heroTag: "emergency_fab",
+                    backgroundColor: Colors.white,
+                    onPressed: _showEmergencyDialog,
+                    child:
+                        const Icon(Icons.emergency, color: Color(0xFFFFC107)),
+                  ),
                 ),
               ),
             ),
+          // Emergency Alerts FAB (Teacher) with scale animation
           if (!_isStudent && _teacherId == _currentUserId)
-            Positioned(
-              top: 110,
-              right: 10,
-              child: Tooltip(
-                message: 'View emergency alerts',
-                child: FloatingActionButton(
-                  heroTag: "emergency_notification",
-                  mini: true,
-                  backgroundColor: Colors.white,
-                  onPressed: _showEmergencyAlertsDialog,
-                  child: _hasNewEmergency
-                      ? const badges.Badge(
-                          badgeContent:
-                              Text('!', style: TextStyle(color: Colors.red)),
-                          child: Icon(Icons.notifications, color: Colors.red),
-                        )
-                      : const Icon(Icons.notifications,
-                          color: Color(0xFFFFC107)),
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              top: 160,
+              right: _areFabsVisible ? 10 : -60,
+              child: AnimatedScale(
+                duration: const Duration(milliseconds: 200),
+                scale: _fabsScale,
+                child: Tooltip(
+                  message: 'View emergency alerts',
+                  child: FloatingActionButton(
+                    heroTag: "emergency_notification",
+                    mini: true,
+                    backgroundColor: Colors.white,
+                    onPressed: _showEmergencyAlertsDialog,
+                    child: _hasNewEmergency
+                        ? const badges.Badge(
+                            badgeContent:
+                                Text('!', style: TextStyle(color: Colors.red)),
+                            child: Icon(Icons.notifications, color: Colors.red),
+                          )
+                        : const Icon(Icons.notifications,
+                            color: Color(0xFFFFC107)),
+                  ),
                 ),
               ),
             ),
-          Positioned(
-            top: 160,
-            right: 10,
-            child: Tooltip(
-              message: _showSchoolBoundary
-                  ? 'Hide school boundary'
-                  : 'Show school boundary',
-              child: FloatingActionButton(
-                heroTag: "boundary_toggle",
-                mini: true,
-                backgroundColor: Colors.white,
-                onPressed: _toggleSchoolBoundary,
-                child: Icon(
-                  _showSchoolBoundary ? Icons.layers_clear : Icons.layers,
-                  color: Color(0xFFFFC107),
+
+          // School Boundary Toggle FAB with scale animation
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            top: 210,
+            right: _areFabsVisible ? 10 : -60,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 200),
+              scale: _fabsScale,
+              child: Tooltip(
+                message: _showSchoolBoundary
+                    ? 'Hide school boundary'
+                    : 'Show school boundary',
+                child: FloatingActionButton(
+                  heroTag: "boundary_toggle",
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _toggleSchoolBoundary,
+                  child: Icon(
+                      _showSchoolBoundary ? Icons.layers_clear : Icons.layers,
+                      color: Color(0xFFFFC107)),
                 ),
               ),
             ),
           ),
-          Positioned(
-            top: 210,
-            right: 10,
-            child: Tooltip(
-              message: _isMapLocked ? 'Unlock map' : 'Lock map to school area',
-              child: FloatingActionButton(
-                heroTag: "map_lock",
-                mini: true,
-                backgroundColor: Colors.white,
-                onPressed: _toggleMapLock,
-                child: Icon(
-                  _isMapLocked ? Icons.lock : Icons.lock_open,
-                  color: Color(0xFFFFC107),
+
+          // Map Lock FAB with scale animation
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            top: 260,
+            right: _areFabsVisible ? 10 : -60,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 200),
+              scale: _fabsScale,
+              child: Tooltip(
+                message:
+                    _isMapLocked ? 'Unlock map' : 'Lock map to school area',
+                child: FloatingActionButton(
+                  heroTag: "map_lock",
+                  mini: true,
+                  backgroundColor: Colors.white,
+                  onPressed: _toggleMapLock,
+                  child: Icon(_isMapLocked ? Icons.lock : Icons.lock_open,
+                      color: Color(0xFFFFC107)),
                 ),
               ),
             ),
@@ -1062,7 +1169,7 @@ class _MapWidgetState extends State<MapWidget> {
       mapController: widget.mapController,
       options: MapOptions(
         initialCenter: widget.schoolCenter,
-        initialZoom: 18.0,
+        initialZoom: 17.7,
         minZoom: 17.0,
         maxZoom: 19.0,
         interactionOptions: InteractionOptions(

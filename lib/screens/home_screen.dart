@@ -29,6 +29,13 @@ class _HomeScreenState extends State<HomeScreen> {
   TimeOfDay _selectedTime = TimeOfDay.now();
   DateTime _selectedDate = DateTime.now();
 
+  Future<void> _handleRefresh() async {
+    // Force a refresh by re-fetching the data
+    await _deleteExpiredGroups();
+    await _fetchUserName();
+    // The StreamBuilder will automatically update when the data changes
+  }
+
   @override
   void initState() {
     super.initState();
@@ -65,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   : Text(
                       "Welcome, $_userName",
-                      key: ValueKey(_userName), 
+                      key: ValueKey(_userName),
                       style: const TextStyle(fontSize: 18),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
@@ -75,7 +82,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       drawer: _buildDrawer(context),
-      body: _buildGroupList(),
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        child: _buildGroupList(),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showModal,
         backgroundColor: Color(0xFFFFC107),
@@ -176,16 +186,28 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text("No groups available."));
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            child: SingleChildScrollView(
+              physics: AlwaysScrollableScrollPhysics(),
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height,
+                child: const Center(child: Text("No groups available.")),
+              ),
+            ),
+          );
         }
 
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(
-              16, 10, 16, 10), // Left, Top, Right, Bottom
-          children: snapshot.data!.docs.map((doc) {
-            var data = doc.data() as Map<String, dynamic>;
-            return _buildGroupCard(doc.id, data);
-          }).toList(),
+        return RefreshIndicator(
+          onRefresh: _handleRefresh,
+          child: ListView(
+            physics: AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            children: snapshot.data!.docs.map((doc) {
+              var data = doc.data() as Map<String, dynamic>;
+              return _buildGroupCard(doc.id, data);
+            }).toList(),
+          ),
         );
       },
     );
@@ -209,10 +231,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
 
-        if (data['groupName'] == null || 
-          data['joinCode'] == null || 
-          data['endTime'] == null || 
-          data['endTime'] is! Timestamp) {
+        if (data['groupName'] == null ||
+            data['joinCode'] == null ||
+            data['endTime'] == null ||
+            data['endTime'] is! Timestamp) {
           return Card(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -368,31 +390,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _deleteExpiredGroups() async {
-  try {
-    QuerySnapshot groups = await _firestore.collection("groups").get();
-    DateTime now = DateTime.now();
+  Future<void> _deleteExpiredGroups() async {
+    try {
+      QuerySnapshot groups = await _firestore.collection("groups").get();
+      DateTime now = DateTime.now();
 
-    for (var doc in groups.docs) {
-      var data = doc.data() as Map<String, dynamic>;
+      for (var doc in groups.docs) {
+        var data = doc.data() as Map<String, dynamic>;
 
-      if (data["endTime"] == null || data["endTime"] is! Timestamp) {
-        continue;
-      }
-
-      try {
-        DateTime endTime = (data["endTime"] as Timestamp).toDate();
-        if (endTime.isBefore(now)) {
-          await _firestore.collection("groups").doc(doc.id).delete();
+        if (data["endTime"] == null || data["endTime"] is! Timestamp) {
+          continue;
         }
-      } catch (e) {
-        print("Error processing group ${doc.id}: $e");
+
+        try {
+          DateTime endTime = (data["endTime"] as Timestamp).toDate();
+          if (endTime.isBefore(now)) {
+            await _firestore.collection("groups").doc(doc.id).delete();
+          }
+        } catch (e) {
+          print("Error processing group ${doc.id}: $e");
+        }
       }
+    } catch (e) {
+      print("Error deleting expired groups: $e");
+      rethrow; // This allows the RefreshIndicator to show if there's an error
     }
-  } catch (e) {
-    print("Error deleting expired groups: $e");
   }
-}
 
   void _showToast(String message) {
     Fluttertoast.showToast(
@@ -406,6 +429,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showModal() {
+    if (widget.userType == "Teacher") {
+      _resetCreateGroupForm();
+    } else {
+      _resetJoinGroupForm();
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -523,42 +552,68 @@ class _HomeScreenState extends State<HomeScreen> {
       _selectedTime.minute,
     );
 
-    await _firestore.collection("groups").add({
-      "groupName": _groupNameController.text,
-      "startTime": _startTime,
-      "endTime": endTime,
-      "joinCode": generatedCode,
-      "createdBy": _auth.currentUser!.uid,
-      "members": [],
-    });
+    try {
+      await _firestore.collection("groups").add({
+        "groupName": _groupNameController.text,
+        "startTime": _startTime,
+        "endTime": endTime,
+        "joinCode": generatedCode,
+        "createdBy": _auth.currentUser!.uid,
+        "members": [],
+      });
 
-    if (mounted) {
-      Navigator.pop(context);
-      _showToast("Group created successfully!");
+      if (mounted) {
+        _resetCreateGroupForm();
+        Navigator.pop(context);
+        _showToast("Group created successfully!");
+      }
+    } catch (e) {
+      if (mounted) {
+        _showToast("Error creating group: ${e.toString()}");
+      }
     }
   }
 
   void _joinGroup() async {
     if (_joinCodeController.text.isEmpty) return;
 
-    var query = await _firestore
-        .collection("groups")
-        .where("joinCode", isEqualTo: _joinCodeController.text)
-        .get();
+    try {
+      var query = await _firestore
+          .collection("groups")
+          .where("joinCode", isEqualTo: _joinCodeController.text)
+          .get();
 
-    if (query.docs.isNotEmpty) {
-      var groupId = query.docs.first.id;
-      await _firestore.collection("groups").doc(groupId).update({
-        "members": FieldValue.arrayUnion([_auth.currentUser!.uid])
-      });
+      if (query.docs.isNotEmpty) {
+        var groupId = query.docs.first.id;
+        await _firestore.collection("groups").doc(groupId).update({
+          "members": FieldValue.arrayUnion([_auth.currentUser!.uid])
+        });
 
-      if (mounted) {
-        Navigator.pop(context);
-        _showToast("Successfully joined the group!");
+        if (mounted) {
+          _resetJoinGroupForm();
+          Navigator.pop(context);
+          _showToast("Successfully joined the group!");
+        }
+      } else {
+        _showToast("Invalid code. Please try again.");
       }
-    } else {
-      _showToast("Invalid code. Please try again.");
+    } catch (e) {
+      if (mounted) {
+        _showToast("Error joining group: ${e.toString()}");
+      }
     }
+  }
+
+  void _resetCreateGroupForm() {
+    _groupNameController.clear();
+    setState(() {
+      _selectedTime = TimeOfDay.now();
+      _selectedDate = DateTime.now();
+    });
+  }
+
+  void _resetJoinGroupForm() {
+    _joinCodeController.clear();
   }
 
   String _generateJoinCode() {
