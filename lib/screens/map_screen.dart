@@ -31,15 +31,19 @@ class _MapScreenState extends State<MapScreen> {
   bool _hasNewEmergency = false;
   bool _showSchoolBoundary = true;
   bool _isMapLocked = false;
+  DateTime? _lastToggleTime;
 
-  LatLng _currentLocation = const LatLng(14.966059, 120.955091);
+  LatLng _currentLocation =
+      const LatLng(14.966654546790489, 120.95499840747644);
+
   final String? _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
   final LatLngBounds _schoolBounds = LatLngBounds(
-    const LatLng(14.9655, 120.9545), // SW corner
-    const LatLng(14.9668, 120.9557), // NE corner
+    const LatLng(14.9664, 120.9547),
+    const LatLng(14.9669, 120.9553),
   );
-  final double _schoolRadius = 100.0;
+
+  final double _schoolRadius = 110.0;
 
   late final LatLng _schoolCenter = LatLng(
     (_schoolBounds.south + _schoolBounds.north) / 2,
@@ -50,6 +54,7 @@ class _MapScreenState extends State<MapScreen> {
   List<String> _memberIds = [];
   bool _isLoadingGroup = true;
   bool _isLocationLoading = false;
+  List<Marker> _userMarkers = [];
 
   bool get _isStudent {
     return _teacherId != null && _currentUserId != _teacherId;
@@ -60,6 +65,7 @@ class _MapScreenState extends State<MapScreen> {
     super.initState();
     _setupGroupListener();
     _setupEmergencyAlertsListener();
+    _setupLocationListener();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateUserLocation();
     });
@@ -80,13 +86,33 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _toggleMapLock() {
+    if (_lastToggleTime != null &&
+        DateTime.now().difference(_lastToggleTime!) <
+            const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastToggleTime = DateTime.now();
+    
     setState(() {
       _isMapLocked = !_isMapLocked;
       if (_isMapLocked) {
-        _fitMapToSchoolBounds(); // Snap back to bounds when locked
+        _fitMapToSchoolBounds();
       }
     });
   }
+
+  void _setupLocationListener() {
+  FirebaseFirestore.instance
+      .collection('groups')
+      .doc(widget.groupId)
+      .collection('locations')
+      .snapshots()
+      .listen((snapshot) {
+    _updateMarkers(); // This will update the markers whenever locations change
+  }, onError: (error) {
+    logger.e("Location listener error: $error");
+  });
+}
 
   void _setupGroupListener() {
     _groupSubscription = FirebaseFirestore.instance
@@ -116,16 +142,56 @@ class _MapScreenState extends State<MapScreen> {
         _memberIds = newMemberIds;
         _isLoadingGroup = false;
       });
+      _updateMarkers();
+    }
+  }
+
+  Future<void> _updateMarkers() async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('groups')
+        .doc(widget.groupId)
+        .collection('locations')
+        .get();
+
+    final markers = snapshot.docs.map((doc) {
+      String userId = doc.id;
+      double lat = doc['latitude'];
+      double lng = doc['longitude'];
+      LatLng userPosition = LatLng(lat, lng);
+
+      Color markerColor;
+      if (userId == _teacherId) {
+        markerColor = const Color(0xFFFFC107);
+      } else if (userId == _currentUserId) {
+        markerColor = Colors.red;
+      } else {
+        markerColor = Colors.blue;
+      }
+
+      return Marker(
+        point: userPosition,
+        width: 40.0,
+        height: 40.0,
+        child: Icon(
+          Icons.location_pin,
+          color: markerColor,
+          size: 40,
+        ),
+      );
+    }).toList();
+
+    if (mounted) {
+      setState(() {
+        _userMarkers = markers;
+      });
     }
   }
 
   void _updateEmergencyMarkers() {
     setState(() {
-      // Get current highlight markers (if any)
       final highlightMarkers =
           _emergencyMarkers.where((m) => m.width == 50.0).toList();
 
-      // Create new markers from alerts
       final newMarkers = _emergencyAlerts
           .map((alert) {
             final data = alert.data() as Map<String, dynamic>;
@@ -136,7 +202,6 @@ class _MapScreenState extends State<MapScreen> {
             logger.d(
                 "Displaying emergency at: ${location.latitude}, ${location.longitude}");
 
-            // Check if this location is already highlighted
             final isHighlighted =
                 highlightMarkers.any((m) => m.point == location);
 
@@ -154,7 +219,6 @@ class _MapScreenState extends State<MapScreen> {
           .whereType<Marker>()
           .toList();
 
-      // Combine new markers with existing highlights
       _emergencyMarkers = [...newMarkers, ...highlightMarkers];
     });
   }
@@ -210,13 +274,11 @@ class _MapScreenState extends State<MapScreen> {
     LatLng newLocation = LatLng(position.latitude, position.longitude);
 
     if (mounted) {
-      // Only call setState if widget is still mounted
       setState(() {
         _currentLocation = newLocation;
       });
     }
 
-    // Still log if outside school bounds
     if (!_schoolBounds.contains(newLocation)) {
       logger.w("⚠️ User is outside school bounds!");
     }
@@ -250,7 +312,7 @@ class _MapScreenState extends State<MapScreen> {
         _schoolBounds,
         options: const FitBoundsOptions(
           padding: EdgeInsets.all(20.0),
-          maxZoom: 18.5, // Tighter zoom
+          maxZoom: 18.5,
         ),
       );
       setState(() {
@@ -259,7 +321,7 @@ class _MapScreenState extends State<MapScreen> {
     } catch (e) {
       logger.e("❌ Error fitting map to bounds: $e");
       try {
-        _mapController.move(_schoolCenter, 18.0); // Higher zoom level
+        _mapController.move(_schoolCenter, 18.0);
       } catch (e) {
         logger.e("❌ Error moving map: $e");
       }
@@ -350,6 +412,7 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       _handleNewPosition(position);
+      await _updateMarkers();
 
       _positionStreamSubscription?.cancel();
       _positionStreamSubscription = Geolocator.getPositionStream(
@@ -360,13 +423,11 @@ class _MapScreenState extends State<MapScreen> {
       ).listen(
         (position) {
           if (mounted) {
-            // Check mounted before handling position
             _handleNewPosition(position);
           }
         },
         onError: (e) {
           if (mounted) {
-            // Check mounted before showing error
             logger.e("Location stream error: $e");
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text("Location error: ${e.toString()}")),
@@ -476,15 +537,11 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     try {
-      // Close the dialog first
       Navigator.of(context).pop();
 
-      // Add a small delay to ensure dialog is fully closed
       Future.delayed(const Duration(milliseconds: 300), () {
-        // Move to the location with animation
         _mapController.move(location, 18.0);
 
-        // Create a temporary highlighted marker
         final highlightMarker = Marker(
           point: location,
           width: 50.0,
@@ -496,7 +553,6 @@ class _MapScreenState extends State<MapScreen> {
           ),
         );
 
-        // Keep existing markers and add the highlight
         setState(() {
           _emergencyMarkers = [
             ..._emergencyMarkers.where((m) => m.point != location),
@@ -504,7 +560,6 @@ class _MapScreenState extends State<MapScreen> {
           ];
         });
 
-        // Remove highlight after 5 seconds
         Future.delayed(const Duration(seconds: 5), () {
           if (mounted) {
             setState(() {
@@ -652,12 +707,11 @@ class _MapScreenState extends State<MapScreen> {
         }
       }
 
-      // Ensure groupId is included in the alert
       await FirebaseFirestore.instance.collection('emergency_alerts').add({
         'studentId': _currentUserId,
         'studentName': studentName,
         'createdBy': _teacherId,
-        'groupId': widget.groupId, // This is crucial
+        'groupId': widget.groupId,
         'timestamp': FieldValue.serverTimestamp(),
         'location':
             GeoPoint(currentLocation.latitude, currentLocation.longitude),
@@ -698,7 +752,7 @@ class _MapScreenState extends State<MapScreen> {
         .orderBy('timestamp', descending: true)
         .snapshots()
         .listen((snapshot) {
-      if (!mounted) return; // Check mounted first
+      if (!mounted) return;
       setState(() {
         _emergencyAlerts = snapshot.docs;
         _hasNewEmergency = snapshot.docs.isNotEmpty;
@@ -706,7 +760,6 @@ class _MapScreenState extends State<MapScreen> {
       _updateEmergencyMarkers();
     }, onError: (error) {
       if (mounted) {
-        // Check mounted for errors too
         logger.e("Emergency alerts listener error: $error");
       }
     });
@@ -811,7 +864,6 @@ class _MapScreenState extends State<MapScreen> {
         ),
       ),
     ).then((_) {
-      // Clear markers when dialog closes
       if (mounted) {
         setState(() {
           _emergencyMarkers = [];
@@ -836,128 +888,22 @@ class _MapScreenState extends State<MapScreen> {
       ),
       body: Stack(
         children: [
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('groups')
-                .doc(widget.groupId)
-                .collection('locations')
-                .snapshots(),
-            builder: (context, locationSnapshot) {
-              if (locationSnapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+          MapWidget(
+            mapController: _mapController,
+            schoolCenter: _schoolCenter,
+            schoolRadius: _schoolRadius,
+            showSchoolBoundary: _showSchoolBoundary,
+            isMapLocked: _isMapLocked,
+            schoolBounds: _schoolBounds,
+            userMarkers: _userMarkers,
+            emergencyMarkers: _emergencyMarkers,
+            onMapReady: () {
+              if (!_isMapReady) {
+                _fitMapToSchoolBounds();
+                setState(() {
+                  _isMapReady = true;
+                });
               }
-
-              if (locationSnapshot.hasError) {
-                logger.e("❌ Firestore Error: ${locationSnapshot.error}");
-                return Center(
-                    child:
-                        Text("❌ Firestore Error: ${locationSnapshot.error}"));
-              }
-
-              if (!locationSnapshot.hasData ||
-                  locationSnapshot.data!.docs.isEmpty) {
-                return const Center(child: Text("ℹ️ No locations found."));
-              }
-
-              List<Marker> markers = locationSnapshot.data!.docs
-                  .map((doc) {
-                    try {
-                      String userId = doc.id;
-                      double lat = doc['latitude'];
-                      double lng = doc['longitude'];
-                      LatLng userPosition = LatLng(lat, lng);
-
-                      Color markerColor;
-                      if (userId == _teacherId) {
-                        markerColor = const Color(0xFFFFC107);
-                      } else if (userId == _currentUserId) {
-                        markerColor = Colors.red;
-                      } else {
-                        markerColor = Colors.blue;
-                      }
-
-                      return Marker(
-                        point: userPosition,
-                        width: 40.0,
-                        height: 40.0,
-                        child: Icon(
-                          Icons.location_pin,
-                          color: markerColor,
-                          size: 40,
-                        ),
-                      );
-                    } catch (e) {
-                      logger.w("⚠️ Invalid location data: ${doc.id}");
-                      return null;
-                    }
-                  })
-                  .whereType<Marker>()
-                  .toList();
-
-              return FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: _schoolCenter,
-                  initialZoom: 18.0, // Increased from 17.5 to zoom in closer
-                  minZoom: 17.0, // Prevent zooming out too far
-                  maxZoom: 19.0,
-                  interactionOptions: InteractionOptions(
-                    flags: _isMapLocked
-                        ? InteractiveFlag
-                            .none // Disable all interactions when locked
-                        : InteractiveFlag.all & ~InteractiveFlag.rotate,
-                  ),
-                  onMapReady: () {
-                    if (!_isMapReady) {
-                      _fitMapToSchoolBounds();
-                    }
-                  },
-                  onPositionChanged: (MapPosition position, bool hasGesture) {
-                    // Optional: You can add logic here to prevent panning outside bounds
-                    if ( _isMapLocked && hasGesture) {
-                      _fitMapToSchoolBounds();
-                      final currentBounds = position.bounds;
-                      if (!_schoolBounds.containsBounds(currentBounds!)) {
-                        // If user panned outside, gently nudge back
-                        Future.delayed(Duration.zero, () {
-                          _mapController.fitBounds(_schoolBounds,
-                              options: const FitBoundsOptions(
-                                padding: EdgeInsets.all(20.0),
-                              ));
-                        });
-                      }
-                    }
-                  },
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                    subdomains: const ['a', 'b', 'c'],
-                    tileProvider: CancellableNetworkTileProvider(),
-                    userAgentPackageName: 'com.example.unitrack',
-                  ),
-                  if (_showSchoolBoundary)
-                    CircleLayer(
-                      circles: [
-                        CircleMarker(
-                          point: _schoolCenter,
-                          radius: _schoolRadius,
-                          useRadiusInMeter: true,
-                          color: Colors.blue.withOpacity(0.03),
-                          borderColor: Colors.blue,
-                          borderStrokeWidth: 2.0,
-                        ),
-                      ],
-                    ),
-                  MarkerLayer(
-                    markers: [
-                      ...markers, // Your existing user markers
-                      ..._emergencyMarkers, // Emergency location markers
-                    ],
-                  ),
-                ],
-              );
             },
           ),
           Positioned(
@@ -1040,7 +986,7 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           Positioned(
-            top: 160, // Below the emergency button
+            top: 160,
             right: 10,
             child: Tooltip(
               message: _showSchoolBoundary
@@ -1059,7 +1005,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           Positioned(
-            top: 210, // Position below the boundary toggle button
+            top: 210,
             right: 10,
             child: Tooltip(
               message: _isMapLocked ? 'Unlock map' : 'Lock map to school area',
@@ -1077,6 +1023,90 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class MapWidget extends StatefulWidget {
+  final MapController mapController;
+  final LatLng schoolCenter;
+  final double schoolRadius;
+  final bool showSchoolBoundary;
+  final bool isMapLocked;
+  final LatLngBounds schoolBounds;
+  final List<Marker> userMarkers;
+  final List<Marker> emergencyMarkers;
+  final VoidCallback onMapReady;
+
+  const MapWidget({
+    super.key,
+    required this.mapController,
+    required this.schoolCenter,
+    required this.schoolRadius,
+    required this.showSchoolBoundary,
+    required this.isMapLocked,
+    required this.schoolBounds,
+    required this.userMarkers,
+    required this.emergencyMarkers,
+    required this.onMapReady,
+  });
+
+  @override
+  State<MapWidget> createState() => _MapWidgetState();
+}
+
+class _MapWidgetState extends State<MapWidget> {
+  @override
+  Widget build(BuildContext context) {
+    return FlutterMap(
+      mapController: widget.mapController,
+      options: MapOptions(
+        initialCenter: widget.schoolCenter,
+        initialZoom: 18.0,
+        minZoom: 17.0,
+        maxZoom: 19.0,
+        interactionOptions: InteractionOptions(
+          flags: widget.isMapLocked
+              ? InteractiveFlag.none
+              : InteractiveFlag.all & ~InteractiveFlag.rotate,
+        ),
+        onMapReady: widget.onMapReady,
+        onPositionChanged: (MapPosition position, bool hasGesture) {
+          if (widget.isMapLocked && hasGesture) {
+            widget.mapController.fitBounds(widget.schoolBounds,
+                options: const FitBoundsOptions(
+                  padding: EdgeInsets.all(20.0),
+                ));
+          }
+        },
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+          subdomains: const ['a', 'b', 'c'],
+          tileProvider: CancellableNetworkTileProvider(),
+          userAgentPackageName: 'com.example.unitrack',
+        ),
+        if (widget.showSchoolBoundary)
+          CircleLayer(
+            circles: [
+              CircleMarker(
+                point: widget.schoolCenter,
+                radius: widget.schoolRadius,
+                useRadiusInMeter: true,
+                color: Colors.blue.withOpacity(0.03),
+                borderColor: Colors.blue,
+                borderStrokeWidth: 2.0,
+              ),
+            ],
+          ),
+        MarkerLayer(
+          markers: [
+            ...widget.userMarkers,
+            ...widget.emergencyMarkers,
+          ],
+        ),
+      ],
     );
   }
 }
