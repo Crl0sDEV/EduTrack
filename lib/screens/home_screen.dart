@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 300),
-              child: _userName == null
+              child: _userName.isEmpty
                   ? const SizedBox(
                       width: 20,
                       height: 20,
@@ -209,7 +209,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final data = snapshot.data!.data() as Map<String, dynamic>;
 
-        if (data['endTime'] == null || !(data['endTime'] is Timestamp)) {
+        if (data['groupName'] == null || 
+          data['joinCode'] == null || 
+          data['endTime'] == null || 
+          data['endTime'] is! Timestamp) {
           return Card(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -366,26 +369,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _deleteExpiredGroups() async {
+  try {
     QuerySnapshot groups = await _firestore.collection("groups").get();
     DateTime now = DateTime.now();
 
     for (var doc in groups.docs) {
       var data = doc.data() as Map<String, dynamic>;
 
-      if (data["endTime"] == null || !(data["endTime"] is Timestamp)) {
-        print(
-            "Group with invalid endTime found: ${data["groupName"] ?? "Unknown"}");
+      if (data["endTime"] == null || data["endTime"] is! Timestamp) {
         continue;
       }
 
-      DateTime endTime = data["endTime"].toDate();
-
-      if (endTime.isBefore(now)) {
-        await _firestore.collection("groups").doc(doc.id).delete();
-        print("Deleted expired group: ${data["groupName"]}");
+      try {
+        DateTime endTime = (data["endTime"] as Timestamp).toDate();
+        if (endTime.isBefore(now)) {
+          await _firestore.collection("groups").doc(doc.id).delete();
+        }
+      } catch (e) {
+        print("Error processing group ${doc.id}: $e");
       }
     }
+  } catch (e) {
+    print("Error deleting expired groups: $e");
   }
+}
 
   void _showToast(String message) {
     Fluttertoast.showToast(

@@ -25,17 +25,17 @@ class _MapScreenState extends State<MapScreen> {
   bool _isMapReady = false;
   StreamSubscription<DocumentSnapshot>? _groupSubscription;
   StreamSubscription<Position>? _positionStreamSubscription;
-  // Add to your state class
   StreamSubscription<QuerySnapshot>? _emergencyAlertsSubscription;
   List<DocumentSnapshot> _emergencyAlerts = [];
+  List<Marker> _emergencyMarkers = [];
   bool _hasNewEmergency = false;
 
-  LatLng _currentLocation = LatLng(14.966059, 120.955091);
+  LatLng _currentLocation = const LatLng(14.966059, 120.955091);
   final String? _currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
   final LatLngBounds _schoolBounds = LatLngBounds(
-    LatLng(14.9655, 120.9545),
-    LatLng(14.9668, 120.9557),
+    const LatLng(14.9655, 120.9545),
+    const LatLng(14.9668, 120.9557),
   );
 
   late final LatLng _schoolCenter = LatLng(
@@ -47,6 +47,7 @@ class _MapScreenState extends State<MapScreen> {
   List<String> _memberIds = [];
   bool _isLoadingGroup = true;
   bool _isLocationLoading = false;
+
   bool get _isStudent {
     return _teacherId != null && _currentUserId != _teacherId;
   }
@@ -85,7 +86,7 @@ class _MapScreenState extends State<MapScreen> {
 
   void _processGroupData(Map<String, dynamic> data) {
     final newMemberIds = List<String>.from(data['members'] ?? []);
-    final newTeacherId = data['createdBy'] as String?; // Using createdBy
+    final newTeacherId = data['createdBy'] as String?;
 
     if (newTeacherId != null && !newMemberIds.contains(newTeacherId)) {
       newMemberIds.add(newTeacherId);
@@ -98,6 +99,46 @@ class _MapScreenState extends State<MapScreen> {
         _isLoadingGroup = false;
       });
     }
+  }
+
+  void _updateEmergencyMarkers() {
+    setState(() {
+      // Get current highlight markers (if any)
+      final highlightMarkers =
+          _emergencyMarkers.where((m) => m.width == 50.0).toList();
+
+      // Create new markers from alerts
+      final newMarkers = _emergencyAlerts
+          .map((alert) {
+            final data = alert.data() as Map<String, dynamic>;
+            final geoPoint = data['location'] as GeoPoint?;
+            if (geoPoint == null) return null;
+
+            final location = LatLng(geoPoint.latitude, geoPoint.longitude);
+            logger.d(
+                "Displaying emergency at: ${location.latitude}, ${location.longitude}");
+
+            // Check if this location is already highlighted
+            final isHighlighted =
+                highlightMarkers.any((m) => m.point == location);
+
+            return Marker(
+              point: location,
+              width: isHighlighted ? 50.0 : 40.0,
+              height: isHighlighted ? 50.0 : 40.0,
+              child: Icon(
+                Icons.emergency,
+                color: Colors.red,
+                size: isHighlighted ? 50 : 40,
+              ),
+            );
+          })
+          .whereType<Marker>()
+          .toList();
+
+      // Combine new markers with existing highlights
+      _emergencyMarkers = [...newMarkers, ...highlightMarkers];
+    });
   }
 
   Future<void> _verifyGroupMembership() async {
@@ -150,11 +191,15 @@ class _MapScreenState extends State<MapScreen> {
 
     LatLng newLocation = LatLng(position.latitude, position.longitude);
 
-    if (_schoolBounds.contains(newLocation)) {
+    if (mounted) {
+      // Only call setState if widget is still mounted
       setState(() {
         _currentLocation = newLocation;
       });
-    } else {
+    }
+
+    // Still log if outside school bounds
+    if (!_schoolBounds.contains(newLocation)) {
       logger.w("⚠️ User is outside school bounds!");
     }
 
@@ -264,34 +309,24 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
-      Position? position;
-      try {
-        position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.best,
-          timeLimit: const Duration(seconds: 15),
-        ).catchError((e) {
-          logger.w("Error getting position: $e");
-          return null;
-        });
-      } catch (e) {
-        logger.e("Position error: $e");
-      }
+      Position? position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 15),
+      ).catchError((e) {
+        logger.w("Error getting position: $e");
+        return null;
+      });
 
       if (position == null) {
-        try {
-          position = await Geolocator.getLastKnownPosition();
-          if (position == null) {
-            logger.w("No position available");
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text("Could not determine your location")),
-              );
-            }
-            return;
+        position = await Geolocator.getLastKnownPosition();
+        if (position == null) {
+          logger.w("No position available");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text("Could not determine your location")),
+            );
           }
-        } catch (e) {
-          logger.e("Last known position error: $e");
           return;
         }
       }
@@ -299,18 +334,22 @@ class _MapScreenState extends State<MapScreen> {
       _handleNewPosition(position);
 
       _positionStreamSubscription?.cancel();
-
       _positionStreamSubscription = Geolocator.getPositionStream(
-        locationSettings: LocationSettings(
+        locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.bestForNavigation,
           distanceFilter: 10,
-          timeLimit: const Duration(seconds: 30),
         ),
       ).listen(
-        _handleNewPosition,
-        onError: (e) {
-          logger.e("Location stream error: $e");
+        (position) {
           if (mounted) {
+            // Check mounted before handling position
+            _handleNewPosition(position);
+          }
+        },
+        onError: (e) {
+          if (mounted) {
+            // Check mounted before showing error
+            logger.e("Location stream error: $e");
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text("Location error: ${e.toString()}")),
             );
@@ -341,13 +380,12 @@ class _MapScreenState extends State<MapScreen> {
           .doc(userId)
           .get();
 
-      if (userDoc.exists && userDoc.data()!.containsKey('name')) {
-        final name = userDoc.data()!['name'] as String?;
-        if (name != null && name.isNotEmpty) {
-          return name;
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        if (data != null && data.containsKey('name')) {
+          return data['name'] as String? ?? 'Unknown';
         }
       }
-
       return "Unknown";
     } catch (e) {
       logger.e("Error fetching user name: $e");
@@ -371,13 +409,11 @@ class _MapScreenState extends State<MapScreen> {
 
       final userNameFutures = allUserIds.map((userId) async {
         final name = await _getUserName(userId);
-
         final locationDoc =
             locationDocs.docs.where((doc) => doc.id == userId).firstOrNull;
-
         LatLng location = locationDoc != null
             ? LatLng(locationDoc['latitude'], locationDoc['longitude'])
-            : LatLng(14.966073, 120.955121);
+            : const LatLng(14.966073, 120.955121);
 
         return UserLocationData(
           id: userId,
@@ -410,6 +446,62 @@ class _MapScreenState extends State<MapScreen> {
       _mapController.move(location, 18.0);
     } catch (e) {
       logger.e("❌ Error navigating to user location: $e");
+    }
+  }
+
+  void _navigateToAlertLocation(LatLng location) {
+    if (!_isMapReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Map is not ready yet")),
+      );
+      return;
+    }
+
+    try {
+      // Close the dialog first
+      Navigator.of(context).pop();
+
+      // Add a small delay to ensure dialog is fully closed
+      Future.delayed(const Duration(milliseconds: 300), () {
+        // Move to the location with animation
+        _mapController.move(location, 18.0);
+
+        // Create a temporary highlighted marker
+        final highlightMarker = Marker(
+          point: location,
+          width: 50.0,
+          height: 50.0,
+          child: const Icon(
+            Icons.emergency,
+            color: Colors.red,
+            size: 50,
+          ),
+        );
+
+        // Keep existing markers and add the highlight
+        setState(() {
+          _emergencyMarkers = [
+            ..._emergencyMarkers.where((m) => m.point != location),
+            highlightMarker
+          ];
+        });
+
+        // Remove highlight after 5 seconds
+        Future.delayed(const Duration(seconds: 5), () {
+          if (mounted) {
+            setState(() {
+              _emergencyMarkers =
+                  _emergencyMarkers.where((m) => m.point != location).toList();
+            });
+          }
+        });
+      });
+    } catch (e) {
+      logger.e("Error navigating to alert location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text("Could not navigate to location: ${e.toString()}")),
+      );
     }
   }
 
@@ -505,19 +597,52 @@ class _MapScreenState extends State<MapScreen> {
     if (_teacherId == null || _currentUserId == null) return;
 
     try {
+      Position? position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      ).catchError((e) {
+        logger.w("Error getting position for emergency: $e");
+        return null;
+      });
+
+      if (position == null) {
+        position = await Geolocator.getLastKnownPosition();
+        if (position == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Could not determine your location")),
+          );
+          return;
+        }
+      }
+
+      final currentLocation = LatLng(position.latitude, position.longitude);
+
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(_currentUserId)
           .get();
 
+      String studentName = 'Unknown';
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        if (data != null && data.containsKey('name')) {
+          studentName = data['name'] as String? ?? 'Unknown';
+        } else if (data != null && data.containsKey('email')) {
+          final email = data['email'] as String?;
+          if (email != null) {
+            studentName = email.split('@').first;
+          }
+        }
+      }
+
+      // Ensure groupId is included in the alert
       await FirebaseFirestore.instance.collection('emergency_alerts').add({
         'studentId': _currentUserId,
-        'studentName': userDoc.get('name') ?? 'Unknown', // Add student name
+        'studentName': studentName,
         'createdBy': _teacherId,
-        'groupId': widget.groupId,
+        'groupId': widget.groupId, // This is crucial
         'timestamp': FieldValue.serverTimestamp(),
         'location':
-            GeoPoint(_currentLocation.latitude, _currentLocation.longitude),
+            GeoPoint(currentLocation.latitude, currentLocation.longitude),
         'status': 'pending',
       });
 
@@ -527,14 +652,6 @@ class _MapScreenState extends State<MapScreen> {
           backgroundColor: Colors.red,
         ),
       );
-
-      await FirebaseFirestore.instance
-          .collection('groups')
-          .doc(widget.groupId)
-          .update({
-        'lastEmergency': FieldValue.serverTimestamp(),
-        'emergencyStudentId': _currentUserId,
-      });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -556,21 +673,23 @@ class _MapScreenState extends State<MapScreen> {
     _emergencyAlertsSubscription?.cancel();
 
     _emergencyAlertsSubscription = FirebaseFirestore.instance
-        .collection('emergency_alerts')
-        .where('createdBy',
-            isEqualTo: _teacherId) // Now matches groups collection
-        .where('status', isEqualTo: 'pending')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .listen((snapshot) {
-      if (mounted) {
-        setState(() {
-          _emergencyAlerts = snapshot.docs;
-          _hasNewEmergency = snapshot.docs.isNotEmpty;
-        });
-      }
+    .collection('emergency_alerts')
+    .where('createdBy', isEqualTo: _teacherId)
+    .where('groupId', isEqualTo: widget.groupId)
+    .where('status', isEqualTo: 'pending')
+    .orderBy('timestamp', descending: true)
+    .snapshots()
+    .listen((snapshot) {
+      if (!mounted) return; // Check mounted first
+      setState(() {
+        _emergencyAlerts = snapshot.docs;
+        _hasNewEmergency = snapshot.docs.isNotEmpty;
+      });
+      _updateEmergencyMarkers();
     }, onError: (error) {
-      logger.e("Emergency alerts listener error: $error");
+      if (mounted) { // Check mounted for errors too
+        logger.e("Emergency alerts listener error: $error");
+      }
     });
   }
 
@@ -582,85 +701,120 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showEmergencyAlertsDialog() {
+    _updateEmergencyMarkers();
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Emergency Alerts"),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: _emergencyAlerts.isEmpty
-              ? const Text("No active emergency alerts")
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _emergencyAlerts.length,
-                  itemBuilder: (context, index) {
-                    final alert =
-                        _emergencyAlerts[index].data() as Map<String, dynamic>;
-                    return FutureBuilder<DocumentSnapshot>(
-                      future: FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(alert['studentId'] as String)
-                          .get(),
-                      builder: (context, snapshot) {
-                        // Handle all possible cases
-                        if (!snapshot.hasData) {
-                          return ListTile(
-                            leading:
-                                const Icon(Icons.emergency, color: Colors.red),
-                            title: const Text("Loading..."),
-                          );
-                        }
-
-                        final userData =
-                            snapshot.data!.data() as Map<String, dynamic>?;
-                        final studentName = userData?['name'] as String? ??
-                            userData?['email']?.toString().split('@').first ??
-                            'Unknown student';
-
-                        return ListTile(
-                          leading:
-                              const Icon(Icons.emergency, color: Colors.red),
-                          title: Text(studentName),
-                          subtitle: Text(
-                            "Sent ${DateFormat('MMM d, h:mm a').format((alert['timestamp'] as Timestamp).toDate())}",
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.location_on),
-                            onPressed: () {
-                              final location = alert['location'] as GeoPoint;
-                              _navigateToUserLocation(LatLng(
-                                  location.latitude, location.longitude));
-                              Navigator.pop(context);
-                            },
-                          ),
-                          onTap: () async {
-                            await _markAlertAsResponded(
-                                _emergencyAlerts[index].id);
-                            final location = alert['location'] as GeoPoint;
-                            _navigateToUserLocation(
-                                LatLng(location.latitude, location.longitude));
-                            Navigator.pop(context);
-                          },
-                        );
-                      },
-                    );
-                  },
-                ),
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Close"),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.7,
+            maxWidth: MediaQuery.of(context).size.width * 0.9,
           ),
-        ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Emergency Alerts',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                  child: _emergencyAlerts.isEmpty
+                      ? const Center(child: Text("No active emergency alerts"))
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _emergencyAlerts.length,
+                          itemBuilder: (context, index) {
+                            final alert = _emergencyAlerts[index].data()
+                                as Map<String, dynamic>;
+                            final geoPoint = alert['location'] as GeoPoint?;
+                            final alertLocation = geoPoint != null
+                                ? LatLng(geoPoint.latitude, geoPoint.longitude)
+                                : null;
+
+                            return ListTile(
+                              leading: const Icon(Icons.emergency,
+                                  color: Colors.red),
+                              title: Text(
+                                  alert['studentName'] ?? 'Unknown student'),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      "Sent ${DateFormat('MMM d, h:mm a').format((alert['timestamp'] as Timestamp).toDate())}"),
+                                  if (alertLocation != null)
+                                    Text(
+                                        "Location: ${alertLocation.latitude.toStringAsFixed(6)}, ${alertLocation.longitude.toStringAsFixed(6)}"),
+                                ],
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.location_on),
+                                onPressed: () {
+                                  if (alertLocation != null) {
+                                    logger.d(
+                                        "Navigating to emergency at: ${alertLocation.latitude}, ${alertLocation.longitude}");
+                                    _navigateToAlertLocation(alertLocation);
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content:
+                                              Text("Invalid location data")),
+                                    );
+                                  }
+                                },
+                              ),
+                              onTap: () async {
+                                await _markAlertAsResponded(
+                                    _emergencyAlerts[index].id);
+                                if (alertLocation != null) {
+                                  _navigateToAlertLocation(alertLocation);
+                                }
+                              },
+                            );
+                          },
+                        )),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
-    );
+    ).then((_) {
+      // Clear markers when dialog closes
+      if (mounted) {
+        setState(() {
+          _emergencyMarkers = [];
+        });
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Real-time Location Tracker")),
+      appBar: AppBar(
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Text(
+              "Location Tracker",
+              style: TextStyle(fontSize: 18),
+            ),
+          ],
+        ),
+      ),
       body: Stack(
         children: [
           StreamBuilder<QuerySnapshot>(
@@ -745,7 +899,12 @@ class _MapScreenState extends State<MapScreen> {
                     tileProvider: CancellableNetworkTileProvider(),
                     userAgentPackageName: 'com.example.unitrack',
                   ),
-                  MarkerLayer(markers: markers),
+                  MarkerLayer(
+                    markers: [
+                      ...markers, // Your existing user markers
+                      ..._emergencyMarkers, // Emergency location markers
+                    ],
+                  ),
                 ],
               );
             },
@@ -788,20 +947,17 @@ class _MapScreenState extends State<MapScreen> {
           ),
           if (_isStudent)
             Positioned(
-              top: 110, // Positioned above the other FAB
+              top: 110,
               right: 10,
               child: FloatingActionButton(
                 mini: true,
                 heroTag: "emergency_fab",
                 backgroundColor: Colors.red,
-                onPressed: () {
-                  _showEmergencyDialog();
-                },
+                onPressed: _showEmergencyDialog,
                 child: const Icon(Icons.emergency, color: Colors.white),
               ),
             ),
-          // Replace the existing teacher FAB with this:
-          if (!_isStudent && _teacherId == _currentUserId && _hasNewEmergency)
+          if (!_isStudent && _teacherId == _currentUserId)
             Positioned(
               top: 110,
               right: 10,
@@ -810,11 +966,13 @@ class _MapScreenState extends State<MapScreen> {
                 mini: true,
                 backgroundColor: Colors.red,
                 onPressed: _showEmergencyAlertsDialog,
-                child: const badges.Badge(
-                  badgeContent:
-                      Text('!', style: TextStyle(color: Colors.white)),
-                  child: Icon(Icons.notifications, color: Colors.white),
-                ),
+                child: _hasNewEmergency
+                    ? const badges.Badge(
+                        badgeContent:
+                            Text('!', style: TextStyle(color: Colors.white)),
+                        child: Icon(Icons.notifications, color: Colors.white),
+                      )
+                    : const Icon(Icons.notifications, color: Colors.white),
               ),
             ),
         ],
