@@ -8,7 +8,9 @@ import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_ti
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:logger/logger.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
 import 'package:badges/badges.dart' as badges;
+import 'package:unitrack/class/location_pin_painter.dart';
 
 class MapScreen extends StatefulWidget {
   final String groupId;
@@ -165,45 +167,107 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _updateMarkers() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('groups')
-        .doc(widget.groupId)
-        .collection('locations')
+  final snapshot = await FirebaseFirestore.instance
+      .collection('groups')
+      .doc(widget.groupId)
+      .collection('locations')
+      .get();
+
+  final markers = await Future.wait(snapshot.docs.map((doc) async {
+    String userId = doc.id;
+    double lat = doc['latitude'];
+    double lng = doc['longitude'];
+    LatLng userPosition = LatLng(lat, lng);
+
+    // Check if user is inside school bounds
+    bool isInside = _schoolBounds.contains(userPosition);
+
+    // Fetch user data
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
         .get();
+    final userData = userDoc.data();
+    final base64Image = userData?['profilePicture'] as String?;
 
-    final markers = snapshot.docs.map((doc) {
-      String userId = doc.id;
-      double lat = doc['latitude'];
-      double lng = doc['longitude'];
-      LatLng userPosition = LatLng(lat, lng);
-
-      Color markerColor;
-      if (userId == _teacherId) {
-        markerColor = const Color(0xFFFFC107);
-      } else if (userId == _currentUserId) {
-        markerColor = Colors.red;
-      } else {
-        markerColor = Colors.blue;
-      }
-
-      return Marker(
-        point: userPosition,
-        width: 40.0,
-        height: 40.0,
-        child: Icon(
-          Icons.location_pin,
-          color: markerColor,
-          size: 40,
-        ),
-      );
-    }).toList();
-
-    if (mounted) {
-      setState(() {
-        _userMarkers = markers;
-      });
+    // Determine marker color
+    Color markerColor;
+    if (userId == _teacherId) {
+      markerColor = const Color(0xFFFFC107);
+    } else if (userId == _currentUserId) {
+      markerColor = Colors.red;
+    } else {
+      markerColor = Colors.blue;
     }
+
+    return Marker(
+      point: userPosition,
+      width: 40.0,
+      height: 50.0,
+      child: Stack(
+        alignment: Alignment.topCenter,
+        children: [
+          // Custom location pin shape
+          CustomPaint(
+            size: Size(40, 50),
+            painter: LocationPinPainter(
+              isInside ? markerColor : Colors.grey, // Grey if outside
+            ),
+          ),
+          // Profile picture container
+          Positioned(
+            top: 6,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white,
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 3,
+                    spreadRadius: 1,
+                  )
+                ],
+                image: base64Image != null
+                    ? DecorationImage(
+                        image: MemoryImage(base64Decode(base64Image)),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                color: base64Image == null ? markerColor : null,
+              ),
+              child: base64Image == null
+                  ? Center(
+                      child: Text(
+                        userData?['name']?.toString().isNotEmpty ?? false
+                            ? userData!['name'][0].toUpperCase()
+                            : '?',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }));
+
+  if (mounted) {
+    setState(() {
+      _userMarkers = markers;
+    });
   }
+}
 
   void _updateEmergencyMarkers() {
     setState(() {
@@ -512,12 +576,16 @@ class _MapScreenState extends State<MapScreen> {
             ? LatLng(locationDoc['latitude'], locationDoc['longitude'])
             : const LatLng(14.966073, 120.955121);
 
+        // Check if location is within school bounds
+        bool isInside = _schoolBounds.contains(location);
+
         return UserLocationData(
           id: userId,
           name: userId == _currentUserId ? "You" : name,
           isTeacher: userId == _teacherId,
           isCurrentUser: userId == _currentUserId,
           location: location,
+          isInsideSchool: isInside, // Add the bounds check result
         );
       }).toList();
 
@@ -634,7 +702,23 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                       title: Text(user.name),
-                      subtitle: Text(user.isTeacher ? 'Teacher' : 'Student'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(user.isTeacher ? 'Teacher' : 'Student'),
+                          Text(
+                            user.isInsideSchool
+                                ? 'Inside school'
+                                : 'Outside school',
+                            style: TextStyle(
+                              color: user.isInsideSchool
+                                  ? Colors.green
+                                  : Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                       trailing: const Icon(Icons.my_location),
                       onTap: () {
                         Navigator.pop(context);
@@ -956,7 +1040,7 @@ class _MapScreenState extends State<MapScreen> {
                 duration: const Duration(milliseconds: 300),
                 turns: _toggleButtonRotation / 360,
                 child: FloatingActionButton(
-                  heroTag: "toggle_fab",  
+                  heroTag: "toggle_fab",
                   mini: true,
                   backgroundColor: Colors.white,
                   onPressed: _toggleFabsVisibility,
@@ -1031,7 +1115,7 @@ class _MapScreenState extends State<MapScreen> {
             AnimatedPositioned(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
-              top: 110,
+              top: 160,
               right: _areFabsVisible ? 10 : -60,
               child: AnimatedScale(
                 duration: const Duration(milliseconds: 200),
@@ -1224,6 +1308,7 @@ class UserLocationData {
   final bool isTeacher;
   final bool isCurrentUser;
   final LatLng location;
+  final bool isInsideSchool;
 
   UserLocationData({
     required this.id,
@@ -1231,5 +1316,6 @@ class UserLocationData {
     required this.isTeacher,
     required this.isCurrentUser,
     required this.location,
+    required this.isInsideSchool,
   });
 }
